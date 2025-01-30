@@ -1,6 +1,6 @@
 # PIC16B-Mathematical-Trading-Project
 ```
 . . x
-x O .
+x O O
 X X O
 ```
