@@ -391,7 +391,6 @@ def handle_save_button(n_clicks, strategy_name, risk_return_preference, indicato
 
         vals = []
         for child in children:
-            # If the child is a dict...
             if isinstance(child, dict):
                 # If this is an Input, grab its value
                 if child.get("type") == "Input":
