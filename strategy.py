@@ -30,13 +30,14 @@ def get_strategy_db():
             CREATE TABLE IF NOT EXISTS strategy (
                 id TEXT PRIMARY KEY,
                 name TEXT,
+                risk_return_preference REAL,
                 indicators TEXT
             )
         """)
         strategy_db.commit()
         return strategy_db
 
-def save_strategy_to_db(strategy_id, strategy_name, indicators_data):
+def save_strategy_to_db(strategy_id, strategy_name, risk_return_preference, indicators_data):
     """Save strategy to database."""
     try:
         db = get_strategy_db()
@@ -46,13 +47,13 @@ def save_strategy_to_db(strategy_id, strategy_name, indicators_data):
         cursor.execute("SELECT id FROM strategy WHERE id = ?", (strategy_id,))
         if cursor.fetchone():
             cursor.execute(
-                "UPDATE strategy SET name = ?, indicators = ? WHERE id = ?",
-                (strategy_name, indicators_json, strategy_id)
+                "UPDATE strategy SET name = ?, risk_return_preference = ?, indicators = ? WHERE id = ?",
+                (strategy_name, risk_return_preference, indicators_json, strategy_id)
             )
         else:
             cursor.execute(
-                "INSERT INTO strategy (id, name, indicators) VALUES (?, ?, ?)",
-                (strategy_id, strategy_name, indicators_json)
+                "INSERT INTO strategy (id, name, risk_return_preference, indicators) VALUES (?, ?, ?, ?)",
+                (strategy_id, strategy_name, risk_return_preference, indicators_json)
             )
         db.commit()
         return True
@@ -76,19 +77,21 @@ def load_strategies():
     """Load all strategies from database."""
     db = get_strategy_db()
     cursor = db.cursor()
-    cursor.execute("SELECT id, name, indicators FROM strategy")
+    cursor.execute("SELECT id, name, risk_return_preference, indicators FROM strategy")
     strategies = []
     
     for row in cursor.fetchall():
-        strategy_id, name, indicators_json = row
+        strategy_id, name, risk_return_preference, indicators_json = row
         indicators = json.loads(indicators_json) if indicators_json else []
         strategies.append({
             "id": strategy_id,
             "name": name,
+            "risk_return_preference": risk_return_preference,
             "indicators": indicators
         })
     
     return strategies
+
 
 # Helper Functions
 def create_indicator_item(indicator_id):
@@ -116,8 +119,9 @@ def create_indicator_item(indicator_id):
         })
     ], className="mt-2 p-3 border rounded")
 
-def create_strategy_card(strategy_id, strategy_name=None):
-    """Create a strategy card with name editing and save functionality."""
+
+def create_strategy_card(strategy_id, strategy_name=None, risk_return_preference=1):
+    """Create a strategy card with name editing, risk-return setting, and save functionality."""
     return dbc.Card([
         dbc.CardHeader(
             dbc.Row([
@@ -147,7 +151,30 @@ def create_strategy_card(strategy_id, strategy_name=None):
         dbc.Collapse(
             dbc.CardBody([
                 html.Div([
-                    html.H5("Indicators"),
+                    # Risk-Return Preference Section
+                    html.H5("Risk-Return Preference"),
+                    dbc.Row([
+                        dbc.Col(
+                            dbc.Label("Set your risk-return preference (higher values = higher risk tolerance):", 
+                                     className="mb-2"),
+                            width=12
+                        ),
+                        dbc.Col(
+                            dbc.Input(
+                                id={'type': 'risk-return-input', 'index': strategy_id},
+                                type="number",
+                                min=0.1,
+                                max=10,
+                                step=0.1,
+                                value=risk_return_preference,
+                                className="mb-3"
+                            ),
+                            width=6
+                        )
+                    ]),
+                    
+                    # Indicators Section
+                    html.H5("Indicators", className="mt-3"),
                     html.Div(id={'type': 'indicators-container', 'index': strategy_id}, children=[]),
                     dbc.Row([
                         dbc.Col(
@@ -221,7 +248,7 @@ live_layout = html.Div([
 # Main layout
 app.layout = html.Div([
     dbc.Container([
-        html.H1("Trader", className="mt-3 mb-3"),
+        html.H1("QuantForge", className="mt-3 mb-3"),
         navbar,
         html.Div(id="page-content", className="mt-3"),
         dcc.Store(id='table-trigger', data=0)
@@ -286,79 +313,176 @@ def add_indicator(n_clicks, existing_indicators):
     prevent_initial_call=True
 )
 def update_indicator_config(indicator_type):
+    if not indicator_type:
+        return html.Div("Select an indicator to configure its parameters")
+        
     if indicator_type == "RSI":
         return html.Div([
             dbc.Label("Period"),
-            dbc.Input(type="number", value=14, min=1, max=100),
+            dbc.Input(type="number", value=14, min=1, max=100, id={'type': 'RSI-period'}),
             dbc.Label("Overbought Level"),
-            dbc.Input(type="number", value=70, min=1, max=100),
+            dbc.Input(type="number", value=70, min=1, max=100, id={'type': 'RSI-overbought'}),
             dbc.Label("Oversold Level"),
-            dbc.Input(type="number", value=30, min=1, max=100),
+            dbc.Input(type="number", value=30, min=1, max=100, id={'type': 'RSI-oversold'}),
         ])
     elif indicator_type == "MACD":
         return html.Div([
             dbc.Label("Fast Period"),
-            dbc.Input(type="number", value=12, min=1, max=100),
+            dbc.Input(type="number", value=12, min=1, max=100, id={'type': 'MACD-fast'}),
             dbc.Label("Slow Period"),
-            dbc.Input(type="number", value=26, min=1, max=100),
+            dbc.Input(type="number", value=26, min=1, max=100, id={'type': 'MACD-slow'}),
             dbc.Label("Signal Period"),
-            dbc.Input(type="number", value=9, min=1, max=100),
+            dbc.Input(type="number", value=9, min=1, max=100, id={'type': 'MACD-signal'}),
         ])
     elif indicator_type == "STOCH":
         return html.Div([
             dbc.Label("K Period"),
-            dbc.Input(type="number", value=14, min=1, max=100),
+            dbc.Input(type="number", value=14, min=1, max=100, id={'type': 'STOCH-k'}),
             dbc.Label("D Period"),
-            dbc.Input(type="number", value=3, min=1, max=100),
+            dbc.Input(type="number", value=3, min=1, max=100, id={'type': 'STOCH-d'}),
             dbc.Label("Slow Period"),
-            dbc.Input(type="number", value=3, min=1, max=100),
+            dbc.Input(type="number", value=3, min=1, max=100, id={'type': 'STOCH-slow'}),
         ])
     elif indicator_type == "SMA_CROSS":
         return html.Div([
-            dbc.Label("Fast SMA Period"),
-            dbc.Input(type="number", value=10, min=1, max=200),
-            dbc.Label("Slow SMA Period"),
-            dbc.Input(type="number", value=20, min=1, max=200),
+            dbc.Label("Fast Period"),
+            dbc.Input(type="number", value=10, min=1, max=100, id={'type': 'SMA-fast'}),
+            dbc.Label("Slow Period"),
+            dbc.Input(type="number", value=20, min=1, max=100, id={'type': 'SMA-slow'}),
         ])
     elif indicator_type == "BBANDS":
         return html.Div([
             dbc.Label("Period"),
-            dbc.Input(type="number", value=20, min=1, max=100),
+            dbc.Input(type="number", value=20, min=1, max=100, id={'type': 'BBANDS-period'}),
             dbc.Label("Standard Deviation"),
-            dbc.Input(type="number", value=2, min=1, max=10),
+            dbc.Input(type="number", value=2, min=0.1, max=10, step=0.1, id={'type': 'BBANDS-std-dev'}),
         ])
     elif indicator_type == "SMI":
         return html.Div([
             dbc.Label("Period"),
-            dbc.Input(type="number", value=14, min=1, max=100),
+            dbc.Input(type="number", value=14, min=1, max=100, id={'type': 'SMI-period'}),
             dbc.Label("Signal Period"),
-            dbc.Input(type="number", value=9, min=1, max=100),
+            dbc.Input(type="number", value=9, min=1, max=100, id={'type': 'SMI-signal'}),
         ])
     return html.Div("Select an indicator to configure its parameters")
-
+    # Other indicator types follow the same pattern...
 @callback(
     Output({'type': 'save-strategy-button', 'index': MATCH}, "children"),
     Input({'type': 'save-strategy-button', 'index': MATCH}, "n_clicks"),
     [State({'type': 'strategy-name-input', 'index': MATCH}, "value"),
-     State({'type': 'indicators-container', 'index': MATCH}, "children")],
+     State({'type': 'risk-return-input', 'index': MATCH}, "value"),
+     State({'type': 'indicator-select', 'index': ALL}, "value"),
+     State({'type': 'indicator-select', 'index': ALL}, "id"),
+     State({'type': 'indicator-config', 'index': ALL}, "children")],
     prevent_initial_call=True
 )
-def handle_save_button(n_clicks, strategy_name, indicators):
-    if n_clicks:
-        triggered_id = dash.callback_context.triggered[0]['prop_id']
-        strategy_id = json.loads(triggered_id.split('.')[0])['index']
-        
-        indicators_data = []
-        for indicator in indicators or []:
-            indicators_data.append({
-                "type": "placeholder",
-                "settings": {}
-            })
-        
-        save_strategy_to_db(strategy_id, strategy_name, indicators_data)
-        return [html.I(className="fas fa-save me-2"), "Save"]
-    return dash.no_update
+def handle_save_button(n_clicks, strategy_name, risk_return_preference, indicator_types, indicator_ids, indicator_configs):
+ # Revised helper function that recursively extracts input values
+    def extract_input_values(component):
+        # Normalize: if component is a dict, get its children from its "props", else if already a list, use it.
+        if isinstance(component, dict):
+            children = component.get("props", {}).get("children", [])
+            if not isinstance(children, list):
+                children = [children]
+        elif isinstance(component, list):
+            children = component
+        else:
+            children = []
 
+        vals = []
+        for child in children:
+            # If the child is a dict...
+            if isinstance(child, dict):
+                # If this is an Input, grab its value
+                if child.get("type") == "Input":
+                    val = child.get("props", {}).get("value")
+                    if val is not None:
+                        vals.append(val)
+                else:
+                    # Otherwise, check whether it has nested children. (Labels and other components will be skipped.)
+                    vals.extend(extract_input_values(child))
+            # In case a child is itself a list, drill down further.
+            elif isinstance(child, list):
+                vals.extend(extract_input_values(child))
+        return vals
+
+    # Only proceed if there have been clicks.
+    if not n_clicks:
+        return dash.no_update
+
+    # Determine the strategy id from the save button's id (using the MATCH pattern)
+    ctx = dash.callback_context
+    triggered_prop = ctx.triggered[0]['prop_id']
+    try:
+        strategy_id = json.loads(triggered_prop.split('.')[0])['index']
+    except Exception as e:
+        print("Error parsing strategy id:", e)
+        return [html.I(className="fas fa-exclamation-triangle me-2"), "Error"]
+
+    indicators_data = []
+    # Here we assume the order of indicator_configs matches the order of indicator_types.
+    for i, config in enumerate(indicator_configs):
+        try:
+            indicator_type = indicator_types[i]
+        except IndexError:
+            continue
+
+        if not indicator_type:
+            continue
+
+        # Use our helper to get all input values (even if nested inside Divs or other containers)
+        input_values = extract_input_values(config)
+
+        # Based on what indicator type is selected, create the settings dictionary if sufficient values exist.
+        settings = {}
+        if indicator_type == "RSI" and len(input_values) >= 3:
+            settings = {
+                "period": input_values[0],
+                "overbought": input_values[1],
+                "oversold": input_values[2],
+            }
+        elif indicator_type == "MACD" and len(input_values) >= 3:
+            settings = {
+                "fast_period": input_values[0],
+                "slow_period": input_values[1],
+                "signal_period": input_values[2],
+            }
+        elif indicator_type == "STOCH" and len(input_values) >= 3:
+            settings = {
+                "k_period": input_values[0],
+                "d_period": input_values[1],
+                "slow_period": input_values[2],
+            }
+        elif indicator_type == "SMA_CROSS" and len(input_values) >= 2:
+            settings = {
+                "fast_period": input_values[0],
+                "slow_period": input_values[1],
+            }
+        elif indicator_type == "BBANDS" and len(input_values) >= 2:
+            settings = {
+                "period": input_values[0],
+                "std_dev": input_values[1],
+            }
+        elif indicator_type == "SMI" and len(input_values) >= 2:
+            settings = {
+                "period": input_values[0],
+                "signal_period": input_values[1],
+            }
+
+        indicators_data.append({
+            "type": indicator_type,
+            "settings": settings
+        })
+
+    # Save the strategy to your database.
+    success = save_strategy_to_db(strategy_id, strategy_name, risk_return_preference, indicators_data)
+
+    if success:
+        return [html.I(className="fas fa-check me-2"), "Saved"]
+    else:
+        return [html.I(className="fas fa-exclamation-triangle me-2"), "Error"]
+        
+        
 @callback(
     Output('table-trigger', 'data'),
     [Input({'type': 'save-strategy-button', 'index': ALL}, 'n_clicks'),
@@ -386,6 +510,7 @@ def update_strategies_table(trigger):
         html.Thead([
             html.Tr([
                 html.Th("Strategy Name"),
+                html.Th("Risk-Return Preference"),
                 html.Th("Number of Indicators"),
                 html.Th("Actions")
             ])
@@ -393,6 +518,7 @@ def update_strategies_table(trigger):
         html.Tbody([
             html.Tr([
                 html.Td(strategy["name"] or "Unnamed Strategy"),
+                html.Td(f"{strategy['risk_return_preference']:.1f}"),
                 html.Td(len(strategy["indicators"])),
                 html.Td(
                     dbc.Button(
