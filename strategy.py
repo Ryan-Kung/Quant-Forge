@@ -270,17 +270,184 @@ class SmaCross(Strategy):
 
 
 # Function to generate the Bokeh plot and embed it inside Dash
-def generate_backtest_bokeh(cash):
+# Modify this function in your code:
+import pandas as pd
+import numpy as np
+from bokeh.plotting import figure
+from bokeh.models import ColumnDataSource, HoverTool, CrosshairTool, Legend
+from bokeh.layouts import column
+from bokeh.embed import file_html
+from bokeh.resources import CDN
+
+def generate_custom_backtest_plot(cash):
+
+    # Define SMA Crossover Strategy
+    class SmaCross(Strategy):
+        n1 = 10
+        n2 = 20
+
+        def init(self):
+            close = self.data.Close
+            self.sma1 = self.I(SMA, close, self.n1)
+            self.sma2 = self.I(SMA, close, self.n2)
+
+        def next(self):
+            if crossover(self.sma1, self.sma2):
+                self.position.close()
+                self.buy()
+            elif crossover(self.sma2, self.sma1):
+                self.position.close()
+                self.sell()
+
+    # Run the backtest
     bt = Backtest(GOOG, SmaCross, cash=cash, commission=.002, exclusive_orders=True)
-    output = bt.run()
-    bokeh_fig = bt.plot(resample=False)  # Generate Bokeh figure
-
-    # Convert Bokeh plot to HTML
-    html_content = file_html(bokeh_fig, CDN)
-
+    stats = bt.run()
+    
+    # Get the data we need for plotting
+    data = GOOG.copy()
+    
+    # Convert index to datetime if it's not already
+    if not isinstance(data.index, pd.DatetimeIndex):
+        data.index = pd.to_datetime(data.index)
+    
+    # Add strategy indicators
+    sma1 = SMA(data.Close, 10)
+    sma2 = SMA(data.Close, 20)
+    
+    # Get trade data from stats
+    trades = stats['_trades']
+    
+    # Create a Bokeh figure for the price chart
+    p = figure(
+        title="SMA Crossover Backtest",
+        x_axis_type="datetime",
+        width=1000,
+        height=500,
+        tools="pan,wheel_zoom,box_zoom,reset,save",
+        toolbar_location="right"
+    )
+    
+    # Create a ColumnDataSource for the OHLC data
+    source = ColumnDataSource(data={
+        'date': data.index,
+        'open': data.Open,
+        'high': data.High,
+        'low': data.Low,
+        'close': data.Close,
+        'sma1': sma1,
+        'sma2': sma2
+    })
+    
+    # Plot price as a line
+    price_line = p.line('date', 'close', source=source, color='#1F77B4', line_width=2, legend_label="Price")
+    
+    # Plot SMAs
+    sma1_line = p.line('date', 'sma1', source=source, color='#FF7F0E', line_width=1.5, legend_label=f"SMA({SmaCross.n1})")
+    sma2_line = p.line('date', 'sma2', source=source, color='#2CA02C', line_width=1.5, legend_label=f"SMA({SmaCross.n2})")
+    
+    # Add buy/sell markers if trades exist
+    if not trades.empty:
+        buy_signals = trades[trades.Size > 0]
+        sell_signals = trades[trades.Size < 0]
+        
+        # Plot buy signals
+        if not buy_signals.empty:
+            p.circle(
+                x=buy_signals.EntryTime,
+                y=buy_signals.EntryPrice,
+                size=10,
+                color='green',
+                alpha=0.7,
+                legend_label="Buy"
+            )
+        
+        # Plot sell signals
+        if not sell_signals.empty:
+            p.circle(
+                x=sell_signals.EntryTime,
+                y=sell_signals.EntryPrice,
+                size=10,
+                color='red',
+                alpha=0.7,
+                legend_label="Sell"
+            )
+    
+    # Add hover tool
+    hover = HoverTool(
+        tooltips=[
+            ('Date', '@date{%F}'),
+            ('Open', '@open{0,0.00}'),
+            ('High', '@high{0,0.00}'),
+            ('Low', '@low{0,0.00}'),
+            ('Close', '@close{0,0.00}'),
+            (f'SMA({SmaCross.n1})', '@sma1{0,0.00}'),
+            (f'SMA({SmaCross.n2})', '@sma2{0,0.00}')
+        ],
+        formatters={'@date': 'datetime'},
+        mode='vline'
+    )
+    p.add_tools(hover)
+    p.add_tools(CrosshairTool())
+    
+    # Configure legend
+    p.legend.location = "top_left"
+    p.legend.click_policy = "hide"
+    
+    # Create a stats summary figure
+    stats_data = {
+        'Metric': [
+            'Return [%]', 'Buy & Hold Return [%]', 'Max. Drawdown [%]', 
+            'Sharpe Ratio', 'Sortino Ratio', 'Calmar Ratio',
+            '# Trades', 'Win Rate [%]', 'Best Trade [%]', 'Worst Trade [%]'
+        ],
+        'Value': [
+            f"{stats['Return [%]']:.2f}",
+            f"{stats['Buy & Hold Return [%]']:.2f}",
+            f"{stats['Max. Drawdown [%]']:.2f}",
+            f"{stats['Sharpe Ratio']:.2f}",
+            f"{stats['Sortino Ratio']:.2f}",
+            f"{stats['Calmar Ratio']:.2f}",
+            f"{stats['# Trades']}",
+            f"{stats['Win Rate [%]']:.2f}",
+            f"{stats['Best Trade [%]']:.2f}",
+            f"{stats['Worst Trade [%]']:.2f}"
+        ]
+    }
+    
+    # Create a stats table
+    stats_tbl = figure(
+        title="Backtest Statistics",
+        width=1000,
+        height=300,
+        x_range=stats_data['Metric'],
+        tools="",
+        toolbar_location=None
+    )
+    
+    # Remove grid lines and axis ticks
+    stats_tbl.xgrid.grid_line_color = None
+    stats_tbl.ygrid.grid_line_color = None
+    stats_tbl.yaxis.visible = False
+    
+    # Add text for stats values
+    y_pos = 0.5
+    for i, (metric, value) in enumerate(zip(stats_data['Metric'], stats_data['Value'])):
+        stats_tbl.text(
+            x=metric, 
+            y=y_pos, 
+            text=[value],
+            text_align="center",
+            text_baseline="middle",
+            text_font_size="14px"
+        )
+    
+    # Layout
+    layout = column(p, stats_tbl)
+    
+    # Convert to HTML
+    html_content = file_html(layout, CDN, "Backtest Results")
+    
     return html_content
-
-
 # Historical Data Layout
 historical_layout = html.Div([
     html.H2("Historical Data Backtesting", className="mt-3 mb-4"),
@@ -320,8 +487,6 @@ historical_layout = html.Div([
     ])
 ])
 
-
-# Callback to update backtest graph using Bokeh inside Dash
 @dash.callback(
     Output("backtest-bokeh-frame", "srcDoc"),
     Input("run-backtest-btn", "n_clicks"),
@@ -329,8 +494,22 @@ historical_layout = html.Div([
     prevent_initial_call=True
 )
 def update_backtest_graph(n_clicks, cash):
-    return generate_backtest_bokeh(cash)
-
+    try:
+        # Use our custom plotting function instead of the built-in one
+        return generate_custom_backtest_plot(cash)
+    except Exception as e:
+        # Create a simple error message figure as fallback
+        from bokeh.plotting import figure
+        from bokeh.embed import file_html
+        from bokeh.resources import CDN
+        
+        error_fig = figure(title=f"Error Running Backtest", width=1000, height=300)
+        error_fig.text(
+            x=0.5, y=0.5, 
+            text=[f"An error occurred: {str(e)}"],
+            text_align="center", text_baseline="middle", text_font_size="14px"
+        )
+        return file_html(error_fig, CDN)
 
 # Callback to update Strategy Dropdown
 @dash.callback(
