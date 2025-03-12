@@ -9,6 +9,7 @@ import pandas as pd
 import pandas_ta as ta
 import time
 import os
+import numpy as np
 from dotenv import load_dotenv
 import logging 
 load_dotenv()
@@ -470,6 +471,441 @@ def run_live_trading(symbol, strategy_id, alpaca_key, secret_key, live=True):
     if thread_id in trading_threads:
         del trading_threads[thread_id]
 
+# Dynamically create a backtesting Strategy class based on a strategy configuration
+
+def create_custom_strategy_class(strategy_config):
+    
+    class CustomStrategy(Strategy):        
+        def init(self):
+            """Initialize indicators based on strategy configuration"""
+            # Extract strategy parameters
+            self.indicators = {}
+            indicators_config = strategy_config.get("indicators", [])
+            self.risk_return = float(strategy_config.get("risk_return_preference", 1.0))
+            
+            # Calculate each indicator based on type
+            for indicator in indicators_config:
+                indicator_type = indicator.get("type")
+                settings = indicator.get("settings", {})
+                
+                if indicator_type == "SMA_CROSS":
+                    fast_period = int(settings.get("fast_period", 10))
+                    slow_period = int(settings.get("slow_period", 20))
+                    self.indicators["sma_fast"] = self.I(SMA, self.data.Close, fast_period)
+                    self.indicators["sma_slow"] = self.I(SMA, self.data.Close, slow_period)
+                    
+                elif indicator_type == "RSI":
+                    period = int(settings.get("period", 14))
+                    self.indicators["rsi"] = self.I(lambda x: self._rsi(x, period), self.data.Close)
+                    self.indicators["rsi_ob"] = float(settings.get("overbought", 70))
+                    self.indicators["rsi_os"] = float(settings.get("oversold", 30))
+                
+                elif indicator_type == "BBANDS":
+                    period = int(settings.get("period", 20))
+                    std_dev = float(settings.get("std_dev", 2.0))
+                    # Calculate using SMA and standard deviation
+                    sma = self.I(SMA, self.data.Close, period)
+                    std = self.I(lambda x: self._std(x, period), self.data.Close)
+                    self.indicators["bb_upper"] = self.I(lambda x, y: x + y * std_dev, sma, std)
+                    self.indicators["bb_lower"] = self.I(lambda x, y: x - y * std_dev, sma, std)
+                    self.indicators["bb_middle"] = sma
+                
+                elif indicator_type == "STOCH":
+                    k_period = int(settings.get("k_period", 14))
+                    d_period = int(settings.get("d_period", 3))
+                    smooth_k = int(settings.get("smooth_k", 3))
+                    self.indicators["stoch_k"], self.indicators["stoch_d"] = self.I(ta.stoch, self.data.High, self.data.Low, self.data.Close, k_period, d_period, smooth_k)
+
+                elif indicator_type == "SMI":
+                    period = int(settings.get("period", 13))
+                    signal_period = int(settings.get("signal_period", 3))
+                    self.indicators["smi"], self.indicators["smi_signal"] = self.I(ta.smi, self.data.Close, period, signal_period)
+
+                elif indicator_type == "MACD":
+                    fast_period = int(settings.get("fast_period", 12))
+                    slow_period = int(settings.get("slow_period", 26))
+                    signal_period = int(settings.get("signal_period", 9))
+                    self.indicators["macd_line"], self.indicators["macd_signal"], self.indicators["macd_hist"] = self.I(ta.macd, self.data.Close, fast_period, slow_period, signal_period)
+
+        
+        def next(self):
+            """Execute trading logic based on indicator values"""
+            # Check if we should buy
+            if not self.position:
+                if self._check_buy_conditions():
+                    self.buy()
+            
+            # Check if we should sell
+            elif self.position:
+                if self._check_sell_conditions():
+                    self.position.close()
+        
+        def _check_buy_conditions(self):
+            """Check if conditions are met for buying"""
+            conditions = []
+            
+            # SMA crossover
+            if "sma_fast" in self.indicators and "sma_slow" in self.indicators:
+                # Check if fast SMA crossed above slow SMA
+                if (self.indicators["sma_fast"][-1] > self.indicators["sma_slow"][-1] and 
+                    self.indicators["sma_fast"][-2] <= self.indicators["sma_slow"][-2]):
+                    conditions.append(True)
+            
+            # RSI oversold condition
+            if "rsi" in self.indicators and "rsi_os" in self.indicators:
+                if self.indicators["rsi"][-1] < self.indicators["rsi_os"]:
+                    conditions.append(True)
+            
+            # Bollinger Bands lower band touch
+            if "bb_lower" in self.indicators:
+                if self.data.Close[-1] < self.indicators["bb_lower"][-1]:
+                    conditions.append(True)
+
+            # SMI oversold condition
+            if "smi" in self.indicators and "smi_os" in self.indicators:
+                if self.indicators["smi"][-1] < self.indicators["smi_os"]:
+                    conditions.append(True)
+            
+            # MACD buy signal 
+            if "macd_line" in self.indicators and "macd_signal" in self.indicators:
+                if self.indicators["macd_line"][-1] > self.indicators["macd_signal"][-1]:
+                    conditions.append(True)
+
+            # Stochastic oversold condition
+            if "stoch_k" in self.indicators and "stoch_d" in self.indicators:
+                if (self.indicators["stoch_k"][-1] < 20 and 
+                    self.indicators["stoch_d"][-1] < 20):
+                    conditions.append(True)
+            
+            # Return True if any buy condition is met
+            return any(conditions) if conditions else False
+        
+        def _check_sell_conditions(self):
+            """Check if conditions are met for selling"""
+            conditions = []
+            
+            # SMA crossover (bearish)
+            if "sma_fast" in self.indicators and "sma_slow" in self.indicators:
+                # Check if fast SMA crossed below slow SMA
+                if (self.indicators["sma_fast"][-1] < self.indicators["sma_slow"][-1] and 
+                    self.indicators["sma_fast"][-2] >= self.indicators["sma_slow"][-2]):
+                    conditions.append(True)
+            
+            # RSI overbought condition
+            if "rsi" in self.indicators and "rsi_ob" in self.indicators:
+                if self.indicators["rsi"][-1] > self.indicators["rsi_ob"]:
+                    conditions.append(True)
+            
+            # Bollinger Bands upper band touch
+            if "bb_upper" in self.indicators:
+                if self.data.Close[-1] > self.indicators["bb_upper"][-1]:
+                    conditions.append(True)
+            
+            # SMI overbought condition
+            if "smi" in self.indicators and "smi_ob" in self.indicators:
+                if self.indicators["smi"][-1] > self.indicators["smi_ob"]:
+                    conditions.append(True)
+            
+            # MACD sell signal
+            if "macd_line" in self.indicators and "macd_signal" in self.indicators:
+                if self.indicators["macd_line"][-1] < self.indicators["macd_signal"][-1]:
+                    conditions.append(True)
+            
+            # Stochastic overbought condition
+            if "stoch_k" in self.indicators and "stoch_d" in self.indicators:
+                if (self.indicators["stoch_k"][-1] > 80 and 
+                    self.indicators["stoch_d"][-1] > 80):
+                    conditions.append(True)
+                    
+            # Risk-Return based exit
+            if self.position:
+                entry_price = self.position.entry_price
+                current_price = self.data.Close[-1]
+                pct_change = (current_price - entry_price) / entry_price * 100
+                
+                # Take profit or stop loss based on risk preference
+                take_profit_threshold = 1.0 * self.risk_return
+                stop_loss_threshold = -0.5 * self.risk_return
+                
+                if pct_change >= take_profit_threshold or pct_change <= stop_loss_threshold:
+                    conditions.append(True)
+            
+            # Return True if any sell condition is met
+            return any(conditions) if conditions else False
+        
+        # Helper methods for indicator calculations
+        def _rsi(self, prices, period=14):
+            """Calculate RSI for backtesting - correctly handles array inputs"""
+            # Handle the case of insufficient data
+            if len(prices) <= period:
+                # Return an array of neutral values of the same length as prices
+                return np.full_like(prices, 50.0)
+                
+            # Calculate price changes using numpy
+            deltas = np.zeros_like(prices)
+            deltas[1:] = np.diff(prices)
+            
+            # Separate gains and losses
+            gains = np.where(deltas > 0, deltas, 0)
+            losses = np.where(deltas < 0, -deltas, 0)
+            
+            # Initialize arrays for average gains and losses
+            avg_gains = np.zeros_like(prices)
+            avg_losses = np.zeros_like(prices)
+            
+            # Calculate first average (simple average)
+            avg_gains[period] = np.mean(gains[1:period+1])
+            avg_losses[period] = np.mean(losses[1:period+1])
+            
+            # Calculate subsequent values (using smoothing)
+            for i in range(period + 1, len(prices)):
+                avg_gains[i] = (avg_gains[i-1] * (period-1) + gains[i]) / period
+                avg_losses[i] = (avg_losses[i-1] * (period-1) + losses[i]) / period
+            
+            # Calculate RS and RSI
+            rs = np.zeros_like(prices)
+            # Avoid division by zero
+            nonzero_indices = avg_losses > 0
+            rs[nonzero_indices] = avg_gains[nonzero_indices] / avg_losses[nonzero_indices]
+            rs[~nonzero_indices] = 100.0
+            
+            # Calculate RSI
+            rsi = 100.0 - (100.0 / (1.0 + rs))
+            
+            # Set RSI to 50 (neutral) for the starting period where we don't have enough data
+            rsi[:period] = 50.0
+            
+            return rsi
+    
+    return CustomStrategy
+
+def generate_backtest_plot(data, stats, strategy_config):
+    """Generate a custom backtest plot with proper data cleaning"""
+    # Create a Bokeh figure for the price chart
+    p = figure(
+        title=f"{strategy_config['name'] or 'Strategy'} Backtest",
+        x_axis_type="datetime",
+        width=1000,
+        height=500,
+        tools="pan,wheel_zoom,box_zoom,reset,save",
+        toolbar_location="right"
+    )
+    
+    # Create a ColumnDataSource for the data with proper NaN handling
+    source_data = {
+        'date': data.index,
+        'open': data['Open'].replace([np.inf, -np.inf], np.nan).fillna(0).values,
+        'high': data['High'].replace([np.inf, -np.inf], np.nan).fillna(0).values,
+        'low': data['Low'].replace([np.inf, -np.inf], np.nan).fillna(0).values,
+        'close': data['Close'].replace([np.inf, -np.inf], np.nan).fillna(0).values
+    }
+    
+    # Initialize indicator_lines list
+    indicator_lines = []
+    indicators_config = strategy_config.get("indicators", [])
+    
+    # Calculate and add all indicators to the plot with proper error handling
+    for indicator in indicators_config:
+        try:
+            indicator_type = indicator.get("type")
+            settings = indicator.get("settings", {})
+            
+            if indicator_type == "SMA_CROSS":
+                fast_period = int(settings.get("fast_period", 10))
+                slow_period = int(settings.get("slow_period", 20))
+                source_data[f'sma_{fast_period}'] = ta.sma(data['Close'], length=fast_period).fillna(0).values
+                source_data[f'sma_{slow_period}'] = ta.sma(data['Close'], length=slow_period).fillna(0).values
+                indicator_lines.append((f'sma_{fast_period}', f'SMA({fast_period})', '#FF7F0E'))
+                indicator_lines.append((f'sma_{slow_period}', f'SMA({slow_period})', '#2CA02C'))
+                
+            elif indicator_type == "RSI":
+                period = int(settings.get("period", 14))
+                rsi_values = ta.rsi(data['Close'], length=period).fillna(50).values
+                source_data['rsi'] = rsi_values
+                indicator_lines.append(('rsi', f'RSI({period})', '#D62728'))
+                
+            elif indicator_type == "MACD":
+                fast_period = int(settings.get("fast_period", 12))
+                slow_period = int(settings.get("slow_period", 26))
+                signal_period = int(settings.get("signal_period", 9))
+                macd_data = ta.macd(data['Close'], fast=fast_period, slow=slow_period, signal=signal_period)
+                for col in macd_data.columns:
+                    source_data[col] = macd_data[col].fillna(0).values
+                indicator_lines.append((macd_data.columns[0], f'MACD Line', '#9467BD'))
+                indicator_lines.append((macd_data.columns[1], f'MACD Signal', '#8C564B'))
+                
+            elif indicator_type == "BBANDS":
+                period = int(settings.get("period", 20))
+                std_dev = float(settings.get("std_dev", 2.0))
+                bbands_data = ta.bbands(data['Close'], length=period, std=std_dev)
+                for col in bbands_data.columns:
+                    source_data[col] = bbands_data[col].fillna(0).values
+                indicator_lines.append((bbands_data.columns[0], f'BB Upper', '#FF7F0E'))
+                indicator_lines.append((bbands_data.columns[1], f'BB Middle', '#2CA02C'))
+                indicator_lines.append((bbands_data.columns[2], f'BB Lower', '#17BECF'))
+                
+            elif indicator_type == "STOCH":
+                k_period = int(settings.get("k_period", 14))
+                d_period = int(settings.get("d_period", 3))
+                smooth_k = int(settings.get("smooth_k", 3))
+                stoch_data = ta.stoch(data['High'], data['Low'], data['Close'], k=k_period, d=d_period, smooth_k=smooth_k)
+                for col in stoch_data.columns:
+                    source_data[col] = stoch_data[col].fillna(50).values
+                indicator_lines.append((stoch_data.columns[0], f'Stochastic %K', '#E377C2'))
+                indicator_lines.append((stoch_data.columns[1], f'Stochastic %D', '#7F7F7F'))
+                
+            elif indicator_type == "SMI":
+                length = int(settings.get("period", 13))
+                signal_length = int(settings.get("signal_period", 3))
+                smi_data = ta.smi(data['Close'], length=length, signal=signal_length)
+                for col in smi_data.columns:
+                    source_data[col] = smi_data[col].fillna(0).values
+                indicator_lines.append((smi_data.columns[0], f'SMI', '#BCBD22'))
+                indicator_lines.append((smi_data.columns[1], f'SMI Signal', '#17BECF'))
+        except Exception as e:
+            print(f"Error calculating {indicator_type}: {str(e)}")
+            continue
+    
+    # Verify all arrays are the same length
+    length_check = None
+    for k, v in source_data.items():
+        if length_check is None:
+            length_check = len(v)
+        elif len(v) != length_check:
+            print(f"Column {k} has length {len(v)}, expected {length_check}")
+            # Pad or truncate to match length
+            if len(v) > length_check:
+                source_data[k] = v[:length_check]
+            else:
+                source_data[k] = np.pad(v, (0, length_check - len(v)), 'constant', constant_values=0)
+    
+    # Create the ColumnDataSource
+    source = ColumnDataSource(data=source_data)
+    
+    # Rest of the function remains unchanged...
+    # Plot price, indicators, etc.
+    price_line = p.line('date', 'close', source=source, color='#1F77B4', line_width=2, legend_label="Price")
+    
+    # Plot indicators
+    for col, label, color in indicator_lines:
+        if col in source_data:  # Only plot if the column exists
+            p.line('date', col, source=source, color=color, line_width=1.5, legend_label=label)
+    
+    # Add buy/sell markers if trades exist
+    trades = stats['_trades']
+    if not trades.empty:
+        buy_signals = trades[trades.Size > 0]
+        sell_signals = trades[trades.Size < 0]
+        
+        # Plot buy signals
+        if not buy_signals.empty:
+            p.circle(
+                x=buy_signals.EntryTime,
+                y=buy_signals.EntryPrice,
+                size=10,
+                color='green',
+                alpha=0.7,
+                legend_label="Buy"
+            )
+        
+        # Plot sell signals
+        if not sell_signals.empty:
+            p.circle(
+                x=sell_signals.EntryTime,
+                y=sell_signals.ExitPrice,  # Use exit price for sell signals
+                size=10,
+                color='red',
+                alpha=0.7,
+                legend_label="Sell"
+            )
+    
+    # Add hover tool
+    hover = HoverTool(
+        tooltips=[
+            ('Date', '@date{%F}'),
+            ('Open', '@open{0,0.00}'),
+            ('High', '@high{0,0.00}'),
+            ('Low', '@low{0,0.00}'),
+            ('Close', '@close{0,0.00}')
+        ],
+        formatters={'@date': 'datetime'},
+        mode='vline'
+    )
+    p.add_tools(hover)
+    p.add_tools(CrosshairTool())
+    
+    # Configure legend
+    p.legend.location = "top_left"
+    p.legend.click_policy = "hide"
+    
+    # Create statistics table with HTML/DIV approach for more reliable display
+    from bokeh.models import Div
+    
+    stats_data = {
+        'Metric': [
+            'Return [%]', 'Buy & Hold Return [%]', 'Max. Drawdown [%]', 
+            'Sharpe Ratio', 'Sortino Ratio', 'Calmar Ratio',
+            '# Trades', 'Win Rate [%]', 'Best Trade [%]', 'Worst Trade [%]'
+        ],
+        'Value': [
+            f"{stats['Return [%]']:.2f}",
+            f"{stats['Buy & Hold Return [%]']:.2f}",
+            f"{stats['Max. Drawdown [%]']:.2f}",
+            f"{stats['Sharpe Ratio']:.2f}",
+            f"{stats['Sortino Ratio']:.2f}",
+            f"{stats['Calmar Ratio']:.2f}",
+            f"{stats['# Trades']}",
+            f"{stats['Win Rate [%]']:.2f}",
+            f"{stats['Best Trade [%]']:.2f}",
+            f"{stats['Worst Trade [%]']:.2f}"
+        ]
+    }
+    
+    # Create HTML for statistics table
+    stats_html = """
+    <div style="padding: 15px; margin-top: 15px;">
+        <h3 style="text-align: center; margin-bottom: 15px;">Backtest Statistics</h3>
+        <table style="width: 100%; border-collapse: collapse; text-align: center;">
+            <tr style="border-bottom: 1px solid #555;">
+                <th style="padding: 8px;">Metric</th>
+                <th style="padding: 8px;">Value</th>
+                <th style="padding: 8px;">Metric</th>
+                <th style="padding: 8px;">Value</th>
+            </tr>
+    """
+    
+    # Add rows for statistics
+    metrics = stats_data['Metric']
+    values = stats_data['Value']
+    half = len(metrics) // 2
+    
+    for i in range(half):
+        stats_html += f"""
+        <tr style="border-bottom: 1px solid #444;">
+            <td style="padding: 8px; font-weight: bold;">{metrics[i]}</td>
+            <td style="padding: 8px;">{values[i]}</td>
+            <td style="padding: 8px; font-weight: bold;">{metrics[i + half]}</td>
+            <td style="padding: 8px;">{values[i + half]}</td>
+        </tr>
+        """
+    
+    stats_html += """
+        </table>
+    </div>
+    """
+    
+    # Create Div component with the HTML
+    stats_div = Div(text=stats_html, width=1000, height=300)
+    
+    # Layout with both components
+    from bokeh.layouts import column
+    layout = column(p, stats_div)
+    
+    # Convert to HTML
+    html_content = file_html(layout, CDN, "Backtest Results")
+    
+    return html_content
+
 # Initialize the app with dark theme
 app = dash.Dash(
     __name__, 
@@ -482,9 +918,6 @@ app = dash.Dash(
 
 # Database functions
 strategy_db = None
-
-
-
 
 def get_strategy_db():
     """Connects to SQLite database and creates a strategy table if it doesn't exist."""
@@ -505,53 +938,29 @@ def get_strategy_db():
         strategy_db.commit()
         return strategy_db
 
-
-
-#YOU CAN DELETE THIS BOTTOM PART
-# def update_strategy_db():
-#     """Updates the strategy table to include position_size if it doesn't exist."""
-#     db = get_strategy_db()
-#     cursor = db.cursor()
-    
-#     # Check if column exists before altering table
-#     cursor.execute("PRAGMA table_info(strategy)")
-#     columns = [col[1] for col in cursor.fetchall()]
-    
-#     if "position_size" not in columns:
-#         cursor.execute("ALTER TABLE strategy ADD COLUMN position_size REAL DEFAULT 0.3")
-#         db.commit()
-
-# # Run this once after updating the code
-# try:
-#     update_strategy_db()
-# except sqlite3.OperationalError:
-#     pass  # Ignore if column already exists
-
-
-def save_strategy_to_db(strategy_id, strategy_name, risk_return_preference, position_size, indicators_data):
-    """Save strategy including position size into the database."""
+def save_strategy_to_db(strategy_id, strategy_name, risk_return_preference, indicators_data):
+    """Save strategy to database."""
     try:
         db = get_strategy_db()
         cursor = db.cursor()
         indicators_json = json.dumps(indicators_data)
-
+        
         cursor.execute("SELECT id FROM strategy WHERE id = ?", (strategy_id,))
         if cursor.fetchone():
             cursor.execute(
-                "UPDATE strategy SET name = ?, risk_return_preference = ?, position_size = ?, indicators = ? WHERE id = ?",
-                (strategy_name, risk_return_preference, position_size, indicators_json, strategy_id)
+                "UPDATE strategy SET name = ?, risk_return_preference = ?, indicators = ? WHERE id = ?",
+                (strategy_name, risk_return_preference, indicators_json, strategy_id)
             )
         else:
             cursor.execute(
-                "INSERT INTO strategy (id, name, risk_return_preference, position_size, indicators) VALUES (?, ?, ?, ?, ?)",
-                (strategy_id, strategy_name, risk_return_preference, position_size, indicators_json)
+                "INSERT INTO strategy (id, name, risk_return_preference, indicators) VALUES (?, ?, ?, ?)",
+                (strategy_id, strategy_name, risk_return_preference, indicators_json)
             )
         db.commit()
         return True
     except Exception as e:
         print(f"Error saving strategy: {e}")
         return False
-
 
 def delete_strategy_from_db(strategy_id):
     """Delete strategy from database."""
@@ -585,7 +994,7 @@ def load_strategies():
     return strategies
 
 
-# Helper Functions
+
 def create_indicator_item(indicator_id):
     """Create an indicator selection box with a dynamic description panel."""
     return html.Div([
@@ -610,8 +1019,6 @@ def create_indicator_item(indicator_id):
         # Indicator Configuration Inputs
         html.Div(id={'type': 'indicator-config', 'index': indicator_id})
     ], className="mt-2 p-3 border rounded")
-
-
 
 def create_strategy_card(strategy_id, strategy_name=None, risk_return_preference=1):
     """Create a strategy card with name editing, risk-return setting, and save functionality."""
@@ -747,7 +1154,6 @@ def create_strategy_card(strategy_id, strategy_name=None, risk_return_preference
             is_open=False,
         ),
     ], className="mb-3")
-
 # Create the navbar with tabs
 navbar = dbc.Tabs(
     [
@@ -779,12 +1185,6 @@ strategy_layout = html.Div([
 
 
 
-
-
-
-import dash
-from dash import dcc, html, Input, Output, State
-import dash_bootstrap_components as dbc
 from backtesting import Backtest, Strategy
 from backtesting.lib import crossover
 from backtesting.test import SMA, GOOG
@@ -811,18 +1211,175 @@ class SmaCross(Strategy):
             self.sell()
 
 
-# Function to generate the Bokeh plot and embed it inside Dash
-def generate_backtest_bokeh(cash):
+from bokeh.plotting import figure
+from bokeh.models import ColumnDataSource, HoverTool, CrosshairTool, Legend
+from bokeh.layouts import column
+from bokeh.embed import file_html
+
+def generate_custom_backtest_plot(cash):
+
+    # Define SMA Crossover Strategy
+    class SmaCross(Strategy):
+        n1 = 10
+        n2 = 20
+
+        def init(self):
+            close = self.data.Close
+            self.sma1 = self.I(SMA, close, self.n1)
+            self.sma2 = self.I(SMA, close, self.n2)
+
+        def next(self):
+            if crossover(self.sma1, self.sma2):
+                self.position.close()
+                self.buy()
+            elif crossover(self.sma2, self.sma1):
+                self.position.close()
+                self.sell()
+
+    # Run the backtest
     bt = Backtest(GOOG, SmaCross, cash=cash, commission=.002, exclusive_orders=True)
-    output = bt.run()
-    bokeh_fig = bt.plot(resample=False)  # Generate Bokeh figure
-
-    # Convert Bokeh plot to HTML
-    html_content = file_html(bokeh_fig, CDN)
-
+    stats = bt.run()
+    
+    # Get the data we need for plotting
+    data = GOOG.copy()
+    
+    # Convert index to datetime if it's not already
+    if not isinstance(data.index, pd.DatetimeIndex):
+        data.index = pd.to_datetime(data.index)
+    
+    # Add strategy indicators
+    sma1 = SMA(data.Close, 10)
+    sma2 = SMA(data.Close, 20)
+    
+    # Get trade data from stats
+    trades = stats['_trades']
+    
+    # Create a Bokeh figure for the price chart
+    p = figure(
+        title="SMA Crossover Backtest",
+        x_axis_type="datetime",
+        width=1000,
+        height=500,
+        tools="pan,wheel_zoom,box_zoom,reset,save",
+        toolbar_location="right"
+    )
+    
+    # Create a ColumnDataSource for the OHLC data
+    source = ColumnDataSource(data={
+        'date': data.index,
+        'open': data.Open,
+        'high': data.High,
+        'low': data.Low,
+        'close': data.Close,
+        'sma1': sma1,
+        'sma2': sma2
+    })
+    
+    # Plot price as a line
+    price_line = p.line('date', 'close', source=source, color='#1F77B4', line_width=2, legend_label="Price")
+    
+    # Plot SMAs
+    sma1_line = p.line('date', 'sma1', source=source, color='#FF7F0E', line_width=1.5, legend_label=f"SMA({SmaCross.n1})")
+    sma2_line = p.line('date', 'sma2', source=source, color='#2CA02C', line_width=1.5, legend_label=f"SMA({SmaCross.n2})")
+    
+    # Add buy/sell markers if trades exist
+    if not trades.empty:
+        buy_signals = trades[trades.Size > 0]
+        sell_signals = trades[trades.Size < 0]
+        
+        # Plot buy signals
+        if not buy_signals.empty:
+            p.circle(
+                x=buy_signals.EntryTime,
+                y=buy_signals.EntryPrice,
+                size=10,
+                color='green',
+                alpha=0.7,
+                legend_label="Buy"
+            )
+        
+        # Plot sell signals
+        if not sell_signals.empty:
+            p.circle(
+                x=sell_signals.EntryTime,
+                y=sell_signals.EntryPrice,
+                size=10,
+                color='red',
+                alpha=0.7,
+                legend_label="Sell"
+            )
+    
+    # Add hover tool
+    hover = HoverTool(
+        tooltips=[
+            ('Date', '@date{%F}'),
+            ('Open', '@open{0,0.00}'),
+            ('High', '@high{0,0.00}'),
+            ('Low', '@low{0,0.00}'),
+            ('Close', '@close{0,0.00}'),
+            (f'SMA({SmaCross.n1})', '@sma1{0,0.00}'),
+            (f'SMA({SmaCross.n2})', '@sma2{0,0.00}')
+        ],
+        formatters={'@date': 'datetime'},
+        mode='vline'
+    )
+    p.add_tools(hover)
+    p.add_tools(CrosshairTool())
+    
+    # Configure legend
+    p.legend.location = "top_left"
+    p.legend.click_policy = "hide"
+    
+    # Create a stats summary figure
+    stats_data = {
+        'Metric': [
+            'Return [%]', 'Buy & Hold Return [%]', 'Max. Drawdown [%]', 
+            'Sharpe Ratio', 'Sortino Ratio', 'Calmar Ratio',
+            '# Trades', 'Win Rate [%]', 'Best Trade [%]', 'Worst Trade [%]'
+        ],
+        'Value': [
+            f"{stats['Return [%]']:.2f}",
+            f"{stats['Buy & Hold Return [%]']:.2f}",
+            f"{stats['Max. Drawdown [%]']:.2f}",
+            f"{stats['Sharpe Ratio']:.2f}",
+            f"{stats['Sortino Ratio']:.2f}",
+            f"{stats['Calmar Ratio']:.2f}",
+            f"{stats['# Trades']}",
+            f"{stats['Win Rate [%]']:.2f}",
+            f"{stats['Best Trade [%]']:.2f}",
+            f"{stats['Worst Trade [%]']:.2f}"
+        ]
+    }
+    
+    # Create a stats table with improved layout
+    from bokeh.models import ColumnDataSource, DataTable, TableColumn
+    
+    # Create a DataTable instead of a figure for statistics
+    source = ColumnDataSource(data=dict(
+        metric=stats_data['Metric'],
+        value=stats_data['Value']
+    ))
+    
+    columns = [
+        TableColumn(field="metric", title="Metric"),
+        TableColumn(field="value", title="Value")
+    ]
+    
+    data_table = DataTable(
+        source=source, 
+        columns=columns,
+        width=1000, 
+        height=300,
+        index_position=None
+    )
+    
+    # Layout with table
+    layout = column(p, data_table)
+    
+    # Convert to HTML
+    html_content = file_html(layout, CDN, "Backtest Results")
+    
     return html_content
-
-
 # Historical Data Layout
 historical_layout = html.Div([
     html.H2("Historical Data Backtesting", className="mt-3 mb-4"),
@@ -830,41 +1387,159 @@ historical_layout = html.Div([
     dbc.Card([
         dbc.CardBody([
             dbc.Row([
-                dbc.Col(dbc.Input(id="ticker-input", type="text", placeholder="Enter Ticker (e.g., GOOG)", className="mb-2"), width=2),
-                dbc.Col(dcc.Dropdown(
-                    id="timeframe-dropdown",
-                    options=[
-                        {"label": "1 Minute", "value": "1m"},
-                        {"label": "5 Minutes", "value": "5m"},
-                        {"label": "15 Minutes", "value": "15m"},
-                        {"label": "1 Hour", "value": "1h"},
-                        {"label": "1 Day", "value": "1d"},
-                    ],
-                    placeholder="Select Timeframe",
-                    className="mb-2",
-                    style={'color': 'black'}
-                ), width=2),
-                dbc.Col(dcc.DatePickerSingle(
-                    id="start-date",
-                    placeholder="Start Date",
-                ), width=2),
-                dbc.Col(dcc.DatePickerSingle(
-                    id="end-date",
-                    placeholder="End Date",
-                ), width=2),
-                dbc.Col(dcc.Dropdown(
-                    id="strategy-dropdown",
-                    placeholder="Select Strategy",
-                    style={'color': 'black', "width": "100%", "height": "38px"}
-                ), width=2),
-                dbc.Col(dbc.Input(id="cash-input", type="number", placeholder="Broker Cash (e.g., $10,000)", value=10000, className="mb-2"), width=2),
+                # Ticker input with label
+                dbc.Col([
+                    html.Label("Ticker",
+                             style={
+                                 'color': '#E0E0E0',  # Light gray to match theme
+                                 'font-weight': '500',
+                                 'margin-bottom': '4px',
+                                 'display': 'block'
+                             }),
+                    dbc.Input(
+                        id="ticker-input",
+                        type="text",
+                        placeholder="Enter Ticker (e.g., GOOG)",
+                        style={
+                            'height': '38px'
+                        }
+                    )
+                ],
+                width=2,
+                className="mb-2"
+                ),
+               
+                # Timeframe dropdown with label
+                dbc.Col([
+                    html.Label("Timeframe",
+                             style={
+                                 'color': '#E0E0E0',  # Light gray to match theme
+                                 'font-weight': '500',
+                                 'margin-bottom': '4px',
+                                 'display': 'block'
+                             }),
+                    dcc.Dropdown(
+                        id="timeframe-dropdown",
+                        options=[
+                            {"label": "1 Minute", "value": "1m"},
+                            {"label": "5 Minutes", "value": "5m"},
+                            {"label": "15 Minutes", "value": "15m"},
+                            {"label": "1 Hour", "value": "1h"},
+                            {"label": "1 Day", "value": "1d"},
+                        ],
+                        placeholder="Select Timeframe",
+                        style={
+                            'color': 'black',
+                            'height': '38px'
+                        }
+                    )
+                ],
+                width=2,
+                className="mb-2"
+                ),
+               
+                # Start Date with label
+                dbc.Col([
+                    html.Label("Start Date",
+                             style={
+                                 'color': '#E0E0E0',  # Light gray to match theme
+                                 'font-weight': '500',
+                                 'margin-bottom': '4px',
+                                 'display': 'block'
+                             }),
+                    dbc.Input(
+                        id="start-date",
+                        type="date",
+                        style={
+                            'height': '38px'
+                        }
+                    )
+                ],
+                width=2,
+                className="mb-2"
+                ),
+               
+                # End Date with label
+                dbc.Col([
+                    html.Label("End Date",
+                             style={
+                                 'color': '#E0E0E0',  # Light gray to match theme
+                                 'font-weight': '500',
+                                 'margin-bottom': '4px',
+                                 'display': 'block'
+                             }),
+                    dbc.Input(
+                        id="end-date",
+                        type="date",
+                        style={
+                            'height': '38px'
+                        }
+                    )
+                ],
+                width=2,
+                className="mb-2"
+                ),
+               
+                # Strategy dropdown with label
+                dbc.Col([
+                    html.Label("Strategy",
+                             style={
+                                 'color': '#E0E0E0',  # Light gray to match theme
+                                 'font-weight': '500',
+                                 'margin-bottom': '4px',
+                                 'display': 'block'
+                             }),
+                    dcc.Dropdown(
+                        id="strategy-dropdown",
+                        placeholder="Select Strategy",
+                        style={
+                            'color': 'black',
+                            'height': '38px'
+                        }
+                    )
+                ],
+                width=2,
+                className="mb-2"
+                ),
+               
+                # Broker Cash input with label
+                dbc.Col([
+                    html.Label("Broker Cash",
+                             style={
+                                 'color': '#E0E0E0',  # Light gray to match theme
+                                 'font-weight': '500',
+                                 'margin-bottom': '4px',
+                                 'display': 'block'
+                             }),
+                    dbc.Input(
+                        id="cash-input",
+                        type="number",
+                        placeholder="Enter amount",
+                        style={
+                            'height': '38px'
+                        }
+                    )
+                ],
+                width=2,
+                className="mb-2"
+                ),
             ], className="g-2"),
+           
             dbc.Row([
-                dbc.Col(dbc.Button("Run Backtest", id="run-backtest-btn", color="primary", className="mt-2"), width="auto"),
-            ], className="g-2"),
+                dbc.Col(
+                    dbc.Button(
+                        "Run Backtest",
+                        id="run-backtest-btn",
+                        color="primary",
+                        className="mt-2"
+                    ),
+                    width="auto"
+                ),
+            ], className="mt-2"),
         ])
     ], className="mb-3"),
 
+    # BACKTEST PLOT
     dbc.Row([
         dbc.Col(html.Iframe(id="backtest-bokeh-frame", style={"width": "100%", "height": "600px", "border": "none"}), width=12)
     ])
@@ -872,28 +1547,7 @@ historical_layout = html.Div([
 
 
 
-# Callback to update backtest graph using Bokeh inside Dash
-@dash.callback(
-    Output("backtest-bokeh-frame", "srcDoc"),
-    Input("run-backtest-btn", "n_clicks"),
-    State("cash-input", "value"),
-    prevent_initial_call=True
-)
-def update_backtest_graph(n_clicks, cash):
-    return generate_backtest_bokeh(cash)
-
-
-# Callback to update Strategy Dropdown
-@dash.callback(
-    Output("strategy-dropdown", "options"),
-    Input("table-trigger", "data")
-)
-def update_strategy_dropdown(trigger):
-    strategies = load_strategies()
-    return [{"label": s["name"], "value": s["id"]} for s in strategies] if strategies else []
-
-
-
+# Callback for indicator description links
 @callback(
     Output({'type': 'indicator-description', 'index': MATCH}, 'children'),
     Input({'type': 'indicator-select', 'index': MATCH}, 'value'),
@@ -937,18 +1591,350 @@ def update_indicator_description(indicator_type):
 
 
 
+#Dropdown to select the strategy in the historical tab
+@callback(
+    Output("strategy-dropdown", "options"),
+    Input("table-trigger", "data")
+)
+def update_historical_strategy_dropdown(trigger):
+    strategies = load_strategies()
+    return [{"label": s["name"] or "Unnamed Strategy", "value": s["id"]} for s in strategies] if strategies else []
 
 
+@callback(
+    Output("backtest-bokeh-frame", "srcDoc"),
+    Input("run-backtest-btn", "n_clicks"),
+    [State("ticker-input", "value"),
+     State("timeframe-dropdown", "value"),
+     State("start-date", "value"),
+     State("end-date", "value"),
+     State("strategy-dropdown", "value"),
+     State("cash-input", "value")],
+    prevent_initial_call=True
+)
+def run_backtest(n_clicks, ticker, timeframe, start_date, end_date, strategy_id, cash):
+    if not all([ticker, timeframe, start_date, end_date, strategy_id, cash]):
+        # Create error message if inputs are missing
+        from bokeh.plotting import figure
+        from bokeh.embed import file_html
+        from bokeh.resources import CDN
+        
+        error_fig = figure(title="Missing Input Parameters", width=1000, height=300)
+        error_fig.text(
+            x=0.5, y=0.5, 
+            text=["Please provide all required inputs: ticker, timeframe, dates, strategy and cash amount."],
+            text_align="center", text_baseline="middle", text_font_size="14px"
+        )
+        return file_html(error_fig, CDN)
+    
+    try:
+        # Convert cash to float
+        cash = float(cash)
+        
+        # Fetch data from Alpaca API
+        api = tradeapi.REST(default_key, default_secret_key, BASE_URL, api_version='v2')
+        
+        # Convert timeframe to Alpaca format
+        timeframe_map = {
+            "1m": "1Min",
+            "5m": "5Min", 
+            "15m": "15Min",
+            "1h": "1Hour",
+            "1d": "1Day"
+        }
+        alpaca_timeframe = timeframe_map.get(timeframe, "1Day")
+        
+        # Fetch historical data
+        logger.info(f"Fetching data for {ticker} from {start_date} to {end_date}")
+        bars = api.get_bars(
+            symbol=ticker,
+            timeframe=alpaca_timeframe,
+            start=start_date,
+            end=end_date
+        ).df
+        
+        if bars.empty:
+            raise ValueError(f"No data available for {ticker} in selected date range")
+        
+        # Prepare data for backtesting
+        data = pd.DataFrame({
+            'Open': bars['open'],
+            'High': bars['high'],
+            'Low': bars['low'],
+            'Close': bars['close'],
+            'Volume': bars['volume']
+        })
+        
+        # Get strategy configuration from database
+        db = get_strategy_db()
+        cursor = db.cursor()
+        cursor.execute("SELECT id, name, risk_return_preference, indicators FROM strategy WHERE id = ?", (strategy_id,))
+        strategy_row = cursor.fetchone()
+        
+        if not strategy_row:
+            raise ValueError(f"Strategy with ID {strategy_id} not found")
+        
+        strategy_config = {
+            "id": strategy_row[0],
+            "name": strategy_row[1],
+            "risk_return_preference": float(strategy_row[2]),
+            "indicators": json.loads(strategy_row[3])
+        }
+        
+        # Create custom strategy class
+        CustomStrategy = create_custom_strategy_class(strategy_config)
+        
+        # Run backtest
+        bt = Backtest(data, CustomStrategy, cash=cash, commission=0.002, exclusive_orders=True)
+        stats = bt.run()
+        
+        # Generate visualization
+        return generate_backtest_plot(data, stats, strategy_config)
+        
+    except Exception as e:
+        logger.error(f"Backtest error: {str(e)}", exc_info=True)
+        
+        # Create simple error message figure
+        from bokeh.plotting import figure
+        from bokeh.embed import file_html
+        from bokeh.resources import CDN
+        
+        error_fig = figure(title=f"Error Running Backtest", width=1000, height=300)
+        error_fig.text(
+            x=0.5, y=0.5, 
+            text=[f"An error occurred: {str(e)}"],
+            text_align="center", text_baseline="middle", text_font_size="14px"
+        )
+        return file_html(error_fig, CDN)
 
-# historical_layout = html.Div([
-#     html.H2("Historical Data", className="mt-3"),
-#     html.P("Historical data content will go here.")
-# ])
-
+# Live Trading Layout
 live_layout = html.Div([
-    html.H2("Live Trading", className="mt-3"),
-    html.P("Live trading content will go here.")
+    html.H2("Live Trading", className="mt-3 mb-4"),
+    
+    #Refresh the table
+    # Add this to your live_layout at the beginning
+    dcc.Interval(
+        id="interval-component",
+        interval=30000,  # 30 seconds in milliseconds
+        n_intervals=0
+    ),
+    # Portfolio Performance Section
+    dbc.Card([
+        dbc.CardHeader(html.H5("Portfolio Performance", className="mb-0")),
+        dbc.CardBody([
+            dbc.Row([
+                # Left column for key metrics
+                dbc.Col([
+                    html.Div([
+                        html.H6("Account Summary", className="mb-3"),
+                        dbc.Row([
+                            dbc.Col(html.Div("Portfolio Value:", className="fw-bold"), width=6),
+                            dbc.Col(html.Div(id="portfolio-value", children="$0.00"), width=6),
+                        ], className="mb-2"),
+                        dbc.Row([
+                            dbc.Col(html.Div("Cash Balance:", className="fw-bold"), width=6),
+                            dbc.Col(html.Div(id="cash-balance", children="$0.00"), width=6),
+                        ], className="mb-2"),
+                        dbc.Row([
+                            dbc.Col(html.Div("Today's P/L:", className="fw-bold"), width=6),
+                            dbc.Col(html.Div(id="daily-pl", children="$0.00"), width=6),
+                        ], className="mb-2"),
+                        dbc.Row([
+                            dbc.Col(html.Div("Total P/L:", className="fw-bold"), width=6),
+                            dbc.Col(html.Div(id="total-pl", children="$0.00"), width=6),
+                        ], className="mb-2"),
+                        html.Hr(),
+                        dbc.Row([
+                            dbc.Col([
+                                dbc.Button(
+                                    [html.I(className="fas fa-sync-alt me-2"), "Refresh Data"],
+                                    id="refresh-portfolio-btn",
+                                    color="secondary",
+                                    size="sm",
+                                    className="w-100"
+                                )
+                            ], width=12)
+                        ])
+                    ], className="p-2")
+                ], md=3),
+                
+                # Right column for chart
+                dbc.Col([
+                    html.Div(
+                        dcc.Graph(
+                            id="portfolio-chart",
+                            figure={
+                                'data': [{
+                                    'x': [],
+                                    'y': [],
+                                    'type': 'line',
+                                    'name': 'Portfolio Value'
+                                }],
+                                'layout': {
+                                    'title': 'Portfolio Performance Over Time',
+                                    'paper_bgcolor': 'rgba(0,0,0,0)',
+                                    'plot_bgcolor': 'rgba(0,0,0,0)',
+                                    'font': {'color': 'white'},
+                                    'xaxis': {'gridcolor': '#444444'},
+                                    'yaxis': {'gridcolor': '#444444'}
+                                }
+                            },
+                            config={'displayModeBar': False}
+                        ),
+                        className="chart-container"
+                    )
+                ], md=9)
+            ])
+        ])
+    ], className="mb-4"),
+        
+    # Strategy Execution Section
+    dbc.Card([
+        dbc.CardHeader(html.H5("Strategy Execution", className="mb-0")),
+        dbc.CardBody([
+            dbc.Row([
+                # Strategy selection dropdown
+                dbc.Col([
+                    dbc.Label("Select Strategy:"),
+                    dcc.Dropdown(
+                        id="live-strategy-dropdown",
+                        options=[],  # Will be populated from the database
+                        placeholder="Choose a strategy to execute",
+                        style={'color': 'black'}
+                    )
+                ], md=4),
+                
+                # Alpaca API configuration
+                dbc.Col([
+                    dbc.Label("Alpaca API Settings:"),
+                    dbc.Row([
+                        dbc.Col(
+                            dbc.Input(id="alpaca-api-key", type="password", placeholder="API Key", className="mb-2"),
+                            width=6
+                        ),
+                        dbc.Col(
+                            dbc.Input(id="alpaca-api-secret", type="password", placeholder="API Secret", className="mb-2"),
+                            width=6
+                        )
+                    ])
+                ], md=4),
+
+                # Symbol Input
+                dbc.Col([
+                    dbc.Label("Symbol:"),
+                    dbc.Input(id="symbol-input", type="text", placeholder="Enter Symbol (e.g., AAPL)", className="mb-2")
+                ], md=4)
+            ], className="mb-3"),
+            
+            # Action buttons
+            dbc.Row([
+                dbc.Col([
+                    dbc.Button(
+                        [html.I(className="fas fa-play me-2"), "Start Trading"],
+                        id="start-trading-btn",
+                        color="success",
+                        className="me-2"
+                    ),
+                    dbc.Button(
+                        [html.I(className="fas fa-stop me-2"), "Stop Trading"],
+                        id="stop-trading-btn",
+                        color="danger",
+                        disabled=True
+                    )
+                ], width="auto"),
+                dbc.Col([
+                    # Trading Status Indicator
+                    html.Div([
+                        html.Span("Status: ", className="me-2"),
+                        html.Span("Inactive", id="trading-status", className="text-warning")
+                    ], className="d-flex align-items-center h-100")
+                ], width="auto"),
+                dbc.Col([
+                    # Last Update Time
+                    html.Div([
+                        html.Span("Last Update: ", className="me-2"),
+                        html.Span("Never", id="last-update-time")
+                    ], className="d-flex align-items-center h-100")
+                ], width="auto")
+            ], className="mb-3"),
+        ])
+    ], className="mb-4"),
+
+    dbc.Card([
+        dbc.CardHeader(html.H5("Trading Log", className="mb-0")),
+        dbc.CardBody([
+            html.Div(id="trading-logs", style={"height": "200px", "overflow": "auto"}),
+            dbc.ButtonGroup([
+                dbc.Button(
+                    [html.I(className="fas fa-sync-alt me-2"), "Refresh Logs"],
+                    id="refresh-logs-btn",
+                    color="secondary",
+                    size="sm",
+                    className="mt-2"
+                ),
+                dbc.Button(
+                    [html.I(className="fas fa-trash me-2"), "Clear Logs"],
+                    id="clear-logs-btn", 
+                    color="danger",
+                    size="sm",
+                    className="mt-2"
+                ),
+            ]),
+        ])
+    ], className="mb-4"),
+
+    # Orders Table Section
+    dbc.Card([
+        dbc.CardHeader(
+            dbc.Row([
+                dbc.Col(html.H5("Recent Orders", className="mb-0"), width="auto"),
+                dbc.Col(
+                    dbc.Button(
+                        [html.I(className="fas fa-sync-alt me-2"), "Refresh"],
+                        id="refresh-orders-btn",
+                        color="link",
+                        size="sm",
+                        className="float-end text-decoration-none"
+                    ),
+                    width="auto",
+                    className="ms-auto"
+                )
+            ])
+        ),
+        dbc.CardBody([
+            html.Div(
+                id="orders-table-container",
+                children=[
+                    dbc.Table(
+                        [
+                       html.Thead(
+                            html.Tr([
+                                html.Th("Symbol"),
+                                html.Th("Side"),
+                                html.Th("Price"),
+                                html.Th("Filled At"),
+                            ])
+                        ),
+                            html.Tbody(id="orders-table-body", children=[
+                                html.Tr([
+                                    html.Td(className="text-center"),
+                                    html.Td("No orders found. Start trading to see orders here.")
+                                ])
+                            ])
+                        ],
+                        bordered=True,
+                        hover=True,
+                        responsive=True,
+                        className="orders-table"
+                    )
+                ]
+            )
+        ])
+    ])
 ])
+
+
+
 
 # Main layout
 app.layout = html.Div([
@@ -998,51 +1984,67 @@ def clear_trading_logs(n_clicks):
     Output("orders-table-body", "children"),
     [Input("refresh-orders-btn", "n_clicks"),
      Input("start-trading-btn", "n_clicks"),
-     Input("interval-component", "n_intervals")],  # Add an interval component for auto-refresh
+     Input("interval-component", "n_intervals")],
     [State("alpaca-api-key", "value"),
      State("alpaca-api-secret", "value")],
     prevent_initial_call=True
 )
 def update_orders_table(refresh_clicks, start_clicks, interval, api_key, api_secret):
-    # Use default keys if none provided
-    api_key = api_key or default_key
-    api_secret = api_secret or default_secret_key
+    # Use provided keys or fall back to defaults
+    api_key = api_key if api_key else default_key
+    api_secret = api_secret if api_secret else default_secret_key
     
     if not api_key or not api_secret:
         return [html.Tr([html.Td(colSpan=4, className="text-center"), 
-                       html.Td("API credentials required to fetch orders.")])]
-    
+                       html.Td("API credentials required to fetch orders.")])]  
     try:
-        # Initialize API
+        # Initialize API with basic configuration
         api = tradeapi.REST(api_key, api_secret, BASE_URL, api_version='v2')
         
-        # Get orders from the last 7 days (only filled ones)
-        import datetime
-        seven_days_ago = (datetime.datetime.now() - datetime.timedelta(days=7)).strftime('%Y-%m-%d')
-        all_orders = api.list_orders(status='all', limit=100, after=seven_days_ago)
+        # Use raw HTTP request to bypass date parsing issues
+        import requests
+        import json
+        
+        # Construct headers manually
+        headers = {
+            'APCA-API-KEY-ID': api_key,
+            'APCA-API-SECRET-KEY': api_secret
+        }
+        
+        # Make direct API request instead
+        url = f"{BASE_URL}/v2/orders?status=all&limit=100"
+        response = requests.get(url, headers=headers)
+        
+        if response.status_code != 200:
+            return [html.Tr([html.Td(colSpan=4, className="text-center"), 
+                          html.Td(f"Error {response.status_code}: {response.text}")])]
+        
+        all_orders = json.loads(response.text)
         
         # Filter for only filled orders
-        filled_orders = [order for order in all_orders if order.status == 'filled']
+        filled_orders = [order for order in all_orders if order.get('status') == 'filled']
         
         if not filled_orders:
             return [html.Tr([html.Td(colSpan=4, className="text-center"), 
                            html.Td("No filled orders found.")])]
         
-        # Format orders for display - simplified version
+        # Format orders for display
         order_rows = []
         for order in filled_orders:
             # Apply color based on side
-            side_color = "text-success" if order.side == 'buy' else "text-danger"
+            side_color = "text-success" if order.get('side') == 'buy' else "text-danger"
             
             # Format price with dollar sign
-            price = f"${float(order.filled_avg_price):.2f}" if hasattr(order, 'filled_avg_price') and order.filled_avg_price else "-"
+            filled_price = order.get('filled_avg_price')
+            price = f"${float(filled_price):.2f}" if filled_price else "-"
             
             # Format the filled time to be more readable
-            filled_time = order.filled_at.replace('T', ' ').split('.')[0] if order.filled_at else "-"
+            filled_at = order.get('filled_at')
+            filled_time = filled_at.replace('T', ' ').split('.')[0] if filled_at else "-"
             
             order_rows.append(html.Tr([
-                html.Td(order.symbol),
-                html.Td(order.side.upper(), className=side_color),
+                html.Td(order.get('symbol')),
+                html.Td(order.get('side', '').upper(), className=side_color),
                 html.Td(price),
                 html.Td(filled_time)
             ]))
@@ -1054,7 +2056,6 @@ def update_orders_table(refresh_clicks, start_clicks, interval, api_key, api_sec
         return [html.Tr([html.Td(colSpan=4, className="text-center"), 
                        html.Td(f"Error fetching orders: {str(e)}")])]
 
-
 # Callback to update strategy dropdown
 @callback(
     Output("live-strategy-dropdown", "options"),
@@ -1065,70 +2066,293 @@ def update_live_strategy_dropdown(trigger):
     return [{"label": s["name"], "value": s["id"]} for s in strategies] if strategies else []
 
 # Callback for Start/Stop trading buttons state
+# Historical Data Layout
+historical_layout = html.Div([
+    html.H2("Historical Data Backtesting", className="mt-3 mb-4"),
+
+    dbc.Card([
+        dbc.CardBody([
+            dbc.Row([
+                # Ticker input with label
+                dbc.Col([
+                    html.Label("Ticker",
+                             style={
+                                 'color': '#E0E0E0',  # Light gray to match theme
+                                 'font-weight': '500',
+                                 'margin-bottom': '4px',
+                                 'display': 'block'
+                             }),
+                    dbc.Input(
+                        id="ticker-input",
+                        type="text",
+                        placeholder="Enter Ticker (e.g., GOOG)",
+                        style={
+                            'height': '38px'
+                        }
+                    )
+                ],
+                width=2,
+                className="mb-2"
+                ),
+               
+                # Timeframe dropdown with label
+                dbc.Col([
+                    html.Label("Timeframe",
+                             style={
+                                 'color': '#E0E0E0',  # Light gray to match theme
+                                 'font-weight': '500',
+                                 'margin-bottom': '4px',
+                                 'display': 'block'
+                             }),
+                    dcc.Dropdown(
+                        id="timeframe-dropdown",
+                        options=[
+                            {"label": "1 Minute", "value": "1m"},
+                            {"label": "5 Minutes", "value": "5m"},
+                            {"label": "15 Minutes", "value": "15m"},
+                            {"label": "1 Hour", "value": "1h"},
+                            {"label": "1 Day", "value": "1d"},
+                        ],
+                        placeholder="Select Timeframe",
+                        style={
+                            'color': 'black',
+                            'height': '38px'
+                        }
+                    )
+                ],
+                width=2,
+                className="mb-2"
+                ),
+               
+                # Start Date with label
+                dbc.Col([
+                    html.Label("Start Date",
+                             style={
+                                 'color': '#E0E0E0',  # Light gray to match theme
+                                 'font-weight': '500',
+                                 'margin-bottom': '4px',
+                                 'display': 'block'
+                             }),
+                    dbc.Input(
+                        id="start-date",
+                        type="date",
+                        style={
+                            'height': '38px'
+                        }
+                    )
+                ],
+                width=2,
+                className="mb-2"
+                ),
+               
+                # End Date with label
+                dbc.Col([
+                    html.Label("End Date",
+                             style={
+                                 'color': '#E0E0E0',  # Light gray to match theme
+                                 'font-weight': '500',
+                                 'margin-bottom': '4px',
+                                 'display': 'block'
+                             }),
+                    dbc.Input(
+                        id="end-date",
+                        type="date",
+                        style={
+                            'height': '38px'
+                        }
+                    )
+                ],
+                width=2,
+                className="mb-2"
+                ),
+               
+                # Strategy dropdown with label
+                dbc.Col([
+                    html.Label("Strategy",
+                             style={
+                                 'color': '#E0E0E0',  # Light gray to match theme
+                                 'font-weight': '500',
+                                 'margin-bottom': '4px',
+                                 'display': 'block'
+                             }),
+                    dcc.Dropdown(
+                        id="strategy-dropdown",
+                        placeholder="Select Strategy",
+                        style={
+                            'color': 'black',
+                            'height': '38px'
+                        }
+                    )
+                ],
+                width=2,
+                className="mb-2"
+                ),
+               
+                # Broker Cash input with label
+                dbc.Col([
+                    html.Label("Broker Cash",
+                             style={
+                                 'color': '#E0E0E0',  # Light gray to match theme
+                                 'font-weight': '500',
+                                 'margin-bottom': '4px',
+                                 'display': 'block'
+                             }),
+                    dbc.Input(
+                        id="cash-input",
+                        type="number",
+                        placeholder="Enter amount",
+                        style={
+                            'height': '38px'
+                        }
+                    )
+                ],
+                width=2,
+                className="mb-2"
+                ),
+            ], className="g-2"),
+           
+            dbc.Row([
+                dbc.Col(
+                    dbc.Button(
+                        "Run Backtest",
+                        id="run-backtest-btn",
+                        color="primary",
+                        className="mt-2"
+                    ),
+                    width="auto"
+                ),
+            ], className="mt-2"),
+        ])
+    ], className="mb-3"),
+
+    # BACKTEST PLOT
+    dbc.Row([
+        dbc.Col(html.Iframe(id="backtest-bokeh-frame", style={"width": "100%", "height": "600px", "border": "none"}), width=12)
+    ])
+])
+
+# Update chart data with Alpaca 
 @callback(
-    [Output("start-trading-btn", "disabled"),
-     Output("stop-trading-btn", "disabled"),
-     Output("trading-status", "children"),
-     Output("trading-status", "className")],
-    [Input("start-trading-btn", "n_clicks"),
-     Input("stop-trading-btn", "n_clicks")],
-    [State("live-strategy-dropdown", "value"),   
-     State("symbol-input", "value"),
-     State("alpaca-api-key", "value"),          
+    [Output("portfolio-value", "children"),
+     Output("cash-balance", "children"),
+     Output("daily-pl", "children"),
+     Output("total-pl", "children"),
+     Output("last-update-time", "children"),
+     Output("portfolio-chart", "figure")],
+    [Input("refresh-portfolio-btn", "n_clicks"),
+     Input("interval-component", "n_intervals")],
+    [State("alpaca-api-key", "value"),
      State("alpaca-api-secret", "value")],
     prevent_initial_call=True
 )
-def handle_trading_actions(start_clicks, stop_clicks, strategy_id, symbol, alpaca_key, secret_key):
-    ctx = dash.callback_context
-    if not ctx.triggered:
-        return dash.no_update, dash.no_update, dash.no_update, dash.no_update
+def update_portfolio_data(refresh_clicks, interval, api_key, api_secret):
+    # Use default keys if none provided
+    api_key = api_key if api_key else default_key
+    api_secret = api_secret if api_key else default_secret_key
     
-    button_id = ctx.triggered[0]["prop_id"].split(".")[0]
-    thread_id = f"{strategy_id}_{symbol}" if strategy_id and symbol else None
+    if not api_key or not api_secret:
+        empty_figure = {
+            'data': [{
+                'x': [],
+                'y': [],
+                'type': 'line',
+                'name': 'Portfolio Value'
+            }],
+            'layout': {
+                'title': 'Portfolio Performance Over Time',
+                'paper_bgcolor': 'rgba(0,0,0,0)',
+                'plot_bgcolor': 'rgba(0,0,0,0)',
+                'font': {'color': 'white'},
+                'xaxis': {'gridcolor': '#444444'},
+                'yaxis': {'gridcolor': '#444444'}
+            }
+        }
+        return "$0.00", "$0.00", "$0.00", "$0.00", "API credentials required", empty_figure
     
-    if button_id == "start-trading-btn":
-        if not strategy_id or not symbol:
-            return False, True, "Please select a strategy and symbol", "text-warning"
-            
-        # Use provided API keys or fall back to defaults if empty
-        api_key = default_key
-        api_secret = default_secret_key
+    try:
+        # Initialize API
+        api = tradeapi.REST(api_key, api_secret, BASE_URL, api_version='v2')
         
-        if not api_key or not api_secret:
-            return False, True, "API credentials required", "text-warning"
-            
-        logger.info(f"Starting trading with strategy {strategy_id} for symbol {symbol}")
+        # Get account information
+        account = api.get_account()
         
-        # If already running, stop it first
-        if thread_id in trading_threads:
-            trading_threads[thread_id]["stop"] = True
-            # Give it a moment to clean up
-            time.sleep(1)
+        # Format portfolio metrics
+        portfolio_value = f"${float(account.portfolio_value):,.2f}"
+        cash_balance = f"${float(account.cash):,.2f}"
         
-        # Start trading in a new thread
-        import threading
-        trading_thread = threading.Thread(
-            target=run_live_trading,
-            args=(symbol, strategy_id, api_key, api_secret, True)
+        # Calculate P/L
+        daily_pl_value = float(account.equity) - float(account.last_equity)
+        daily_pl_color = "text-success" if daily_pl_value >= 0 else "text-danger"
+        daily_pl = html.Span(
+            f"${abs(daily_pl_value):,.2f} ({abs(daily_pl_value)/float(account.last_equity)*100:.2f}%)",
+            className=daily_pl_color
         )
-        trading_thread.daemon = True
-        trading_thread.start()
         
-        return True, False, f"Trading active: {symbol}", "text-success"
-    
-    elif button_id == "stop-trading-btn":
-        # Signal thread to stop if it exists
-        if thread_id in trading_threads:
-            trading_threads[thread_id]["stop"] = True
-            logger.info(f"Stopping trading for {symbol} with strategy {strategy_id}")
-            return False, True, "Inactive", "text-warning"
-        else:
-            # No thread was running
-            return False, True, "No active trading to stop", "text-warning"
-    
-    # Default - no change
-    return dash.no_update, dash.no_update, dash.no_update, dash.no_update
-
+        # Calculate total P/L based on initial investment (estimate)
+        # This is simplified - you might need to calculate this differently
+        total_pl_value = float(account.equity) - float(account.initial_margin)
+        total_pl_color = "text-success" if total_pl_value >= 0 else "text-danger"
+        total_pl = html.Span(
+            f"${abs(total_pl_value):,.2f}",
+            className=total_pl_color
+        )
+        
+        # Get portfolio history for the chart
+        end = pd.Timestamp.now(tz='America/New_York')
+        start = end - pd.Timedelta(days=30)  # Last 30 days
+        
+        portfolio_history = api.get_portfolio_history(
+            period='1M',  # 1 month
+            timeframe='1D',  # Daily data points
+            extended_hours=True
+        )
+        
+        # Create dataframe from portfolio history
+        timestamps = pd.to_datetime(portfolio_history.timestamp, unit='s')
+        equity_values = portfolio_history.equity
+        
+        # Create the figure
+        figure = {
+            'data': [{
+                'x': timestamps,
+                'y': equity_values,
+                'type': 'line',
+                'name': 'Portfolio Value'
+            }],
+            'layout': {
+                'title': 'Portfolio Performance (Last 30 Days)',
+                'paper_bgcolor': 'rgba(0,0,0,0)',
+                'plot_bgcolor': 'rgba(0,0,0,0)',
+                'font': {'color': 'white'},
+                'xaxis': {'gridcolor': '#444444'},
+                'yaxis': {'gridcolor': '#444444', 'tickprefix': '$'}
+            }
+        }
+        
+        # Format current time
+        current_time = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        return portfolio_value, cash_balance, daily_pl, total_pl, current_time, figure
+        
+    except Exception as e:
+        logger.error(f"Error updating portfolio data: {str(e)}")
+        empty_figure = {
+            'data': [{
+                'x': [],
+                'y': [],
+                'type': 'line',
+                'name': 'Portfolio Value'
+            }],
+            'layout': {
+                'title': f'Error: {str(e)}',
+                'paper_bgcolor': 'rgba(0,0,0,0)',
+                'plot_bgcolor': 'rgba(0,0,0,0)',
+                'font': {'color': 'white'},
+                'xaxis': {'gridcolor': '#444444'},
+                'yaxis': {'gridcolor': '#444444'}
+            }
+        }
+        return "$0.00", "$0.00", "$0.00", "$0.00", f"Error: {str(e)}", empty_figure
 
 @callback(
     Output("page-content", "children"),
@@ -1240,23 +2464,20 @@ def update_indicator_config(indicator_type):
         ])
     return html.Div("Select an indicator to configure its parameters")
     # Other indicator types follow the same pattern...
-
 @callback(
     Output({'type': 'save-strategy-button', 'index': MATCH}, "children"),
     Input({'type': 'save-strategy-button', 'index': MATCH}, "n_clicks"),
     [State({'type': 'strategy-name-input', 'index': MATCH}, "value"),
      State({'type': 'risk-return-input', 'index': MATCH}, "value"),
-     State({'type': 'position-size-input', 'index': MATCH}, "value"),  # Capture position size
      State({'type': 'indicator-select', 'index': ALL}, "value"),
      State({'type': 'indicator-select', 'index': ALL}, "id"),
      State({'type': 'indicator-config', 'index': ALL}, "children")],
     prevent_initial_call=True
 )
-def handle_save_button(n_clicks, strategy_name, risk_return_preference, position_size, indicator_types, indicator_ids, indicator_configs):
-    """Handles saving the strategy, including Position Size."""
-
-    # Extract input values from indicator configurations
+def handle_save_button(n_clicks, strategy_name, risk_return_preference, indicator_types, indicator_ids, indicator_configs):
+ # Revised helper function that recursively extracts input values
     def extract_input_values(component):
+        # Normalize: if component is a dict, get its children from its "props", else if already a list, use it.
         if isinstance(component, dict):
             children = component.get("props", {}).get("children", [])
             if not isinstance(children, list):
@@ -1269,19 +2490,24 @@ def handle_save_button(n_clicks, strategy_name, risk_return_preference, position
         vals = []
         for child in children:
             if isinstance(child, dict):
+                # If this is an Input, grab its value
                 if child.get("type") == "Input":
                     val = child.get("props", {}).get("value")
                     if val is not None:
                         vals.append(val)
                 else:
+                    # Otherwise, check whether it has nested children. (Labels and other components will be skipped.)
                     vals.extend(extract_input_values(child))
+            # In case a child is itself a list, drill down further.
             elif isinstance(child, list):
                 vals.extend(extract_input_values(child))
         return vals
 
+    # Only proceed if there have been clicks.
     if not n_clicks:
         return dash.no_update
 
+    # Determine the strategy id from the save button's id (using the MATCH pattern)
     ctx = dash.callback_context
     triggered_prop = ctx.triggered[0]['prop_id']
     try:
@@ -1291,6 +2517,7 @@ def handle_save_button(n_clicks, strategy_name, risk_return_preference, position
         return [html.I(className="fas fa-exclamation-triangle me-2"), "Error"]
 
     indicators_data = []
+    # Here we assume the order of indicator_configs matches the order of indicator_types.
     for i, config in enumerate(indicator_configs):
         try:
             indicator_type = indicator_types[i]
@@ -1300,32 +2527,57 @@ def handle_save_button(n_clicks, strategy_name, risk_return_preference, position
         if not indicator_type:
             continue
 
+        # Use our helper to get all input values (even if nested inside Divs or other containers)
         input_values = extract_input_values(config)
 
+        # Based on what indicator type is selected, create the settings dictionary if sufficient values exist.
         settings = {}
         if indicator_type == "RSI" and len(input_values) >= 3:
-            settings = {"period": input_values[0], "overbought": input_values[1], "oversold": input_values[2]}
+            settings = {
+                "period": input_values[0],
+                "overbought": input_values[1],
+                "oversold": input_values[2],
+            }
         elif indicator_type == "MACD" and len(input_values) >= 3:
-            settings = {"fast_period": input_values[0], "slow_period": input_values[1], "signal_period": input_values[2]}
+            settings = {
+                "fast_period": input_values[0],
+                "slow_period": input_values[1],
+                "signal_period": input_values[2],
+            }
         elif indicator_type == "STOCH" and len(input_values) >= 3:
-            settings = {"k_period": input_values[0], "d_period": input_values[1], "slow_period": input_values[2]}
+            settings = {
+                "k_period": input_values[0],
+                "d_period": input_values[1],
+                "slow_period": input_values[2],
+            }
         elif indicator_type == "SMA_CROSS" and len(input_values) >= 2:
-            settings = {"fast_period": input_values[0], "slow_period": input_values[1]}
+            settings = {
+                "fast_period": input_values[0],
+                "slow_period": input_values[1],
+            }
         elif indicator_type == "BBANDS" and len(input_values) >= 2:
-            settings = {"period": input_values[0], "std_dev": input_values[1]}
+            settings = {
+                "period": input_values[0],
+                "std_dev": input_values[1],
+            }
         elif indicator_type == "SMI" and len(input_values) >= 2:
-            settings = {"period": input_values[0], "signal_period": input_values[1]}
+            settings = {
+                "period": input_values[0],
+                "signal_period": input_values[1],
+            }
 
-        indicators_data.append({"type": indicator_type, "settings": settings})
+        indicators_data.append({
+            "type": indicator_type,
+            "settings": settings
+        })
 
-    # Save the strategy with position size
-    success = save_strategy_to_db(strategy_id, strategy_name, risk_return_preference, position_size, indicators_data)
+    # Save the strategy to your database.
+    success = save_strategy_to_db(strategy_id, strategy_name, risk_return_preference, indicators_data)
 
     if success:
         return [html.I(className="fas fa-check me-2"), "Saved"]
     else:
         return [html.I(className="fas fa-exclamation-triangle me-2"), "Error"]
-
         
         
 @callback(
