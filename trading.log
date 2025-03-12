@@ -1,4 +1,73 @@
-2025-03-09 22:19:50,593 - trading - ERROR - Error fetching orders: forbidden.
-2025-03-09 22:20:17,340 - trading - ERROR - Error fetching orders: forbidden.
-2025-03-09 22:20:47,637 - trading - ERROR - Error fetching orders: forbidden.
-2025-03-09 22:21:17,349 - trading - ERROR - Error fetching orders: forbidden.
+Log cleared at 2025-03-11 22:58:15
+2025-03-12 01:30:22,029 - trading - ERROR - Backtest error: No historical data available for AAPL between 2025-03-09 and 2025-03-12
+Traceback (most recent call last):
+  File "C:\Users\jeffr\Downloads\PIC16B\PIC16B-Mathematical-Trading-Project\strategy.py", line 1460, in run_backtest_callback
+    stats = run_backtest(
+            ^^^^^^^^^^^^^
+  File "C:\Users\jeffr\Downloads\PIC16B\PIC16B-Mathematical-Trading-Project\custom_backtest.py", line 351, in run_backtest
+    raise e
+  File "C:\Users\jeffr\Downloads\PIC16B\PIC16B-Mathematical-Trading-Project\custom_backtest.py", line 329, in run_backtest
+    raise ValueError(f"No historical data available for {symbol} between {start} and {end}")
+ValueError: No historical data available for AAPL between 2025-03-09 and 2025-03-12
+2025-03-12 01:30:23,441 - trading - ERROR - Backtest error: No historical data available for AAPL between 2025-03-09 and 2025-03-12
+Traceback (most recent call last):
+  File "C:\Users\jeffr\Downloads\PIC16B\PIC16B-Mathematical-Trading-Project\strategy.py", line 1460, in run_backtest_callback
+    stats = run_backtest(
+            ^^^^^^^^^^^^^
+  File "C:\Users\jeffr\Downloads\PIC16B\PIC16B-Mathematical-Trading-Project\custom_backtest.py", line 351, in run_backtest
+    raise e
+  File "C:\Users\jeffr\Downloads\PIC16B\PIC16B-Mathematical-Trading-Project\custom_backtest.py", line 329, in run_backtest
+    raise ValueError(f"No historical data available for {symbol} between {start} and {end}")
+ValueError: No historical data available for AAPL between 2025-03-09 and 2025-03-12
+2025-03-12 01:30:34,224 - trading - ERROR - Backtest error: No historical data available for SPY between 2025-03-09 and 2025-03-12
+Traceback (most recent call last):
+  File "C:\Users\jeffr\Downloads\PIC16B\PIC16B-Mathematical-Trading-Project\strategy.py", line 1460, in run_backtest_callback
+    stats = run_backtest(
+            ^^^^^^^^^^^^^
+  File "C:\Users\jeffr\Downloads\PIC16B\PIC16B-Mathematical-Trading-Project\custom_backtest.py", line 351, in run_backtest
+    raise e
+  File "C:\Users\jeffr\Downloads\PIC16B\PIC16B-Mathematical-Trading-Project\custom_backtest.py", line 329, in run_backtest
+    raise ValueError(f"No historical data available for {symbol} between {start} and {end}")
+ValueError: No historical data available for SPY between 2025-03-09 and 2025-03-12
+2025-03-12 01:35:13,573 - trading - INFO - Running backtest for AAPL from 2025-03-10 to 2025-03-12 with b3cc3f6b
+2025-03-12 01:35:13,812 - trading - ERROR - Backtest error: No historical data available for AAPL between 2025-03-10 and 2025-03-12
+Traceback (most recent call last):
+  File "C:\Users\jeffr\Downloads\PIC16B\PIC16B-Mathematical-Trading-Project\strategy.py", line 1834, in run_backtest_callback
+    result = run_backtest(
+             ^^^^^^^^^^^^^
+  File "C:\Users\jeffr\Downloads\PIC16B\PIC16B-Mathematical-Trading-Project\custom_backtest.py", line 351, in run_backtest
+    raise e
+  File "C:\Users\jeffr\Downloads\PIC16B\PIC16B-Mathematical-Trading-Project\custom_backtest.py", line 329, in run_backtest
+    raise ValueError(f"No historical data available for {symbol} between {start} and {end}")
+ValueError: No historical data available for AAPL between 2025-03-10 and 2025-03-12
+2025-03-12 01:39:20,394 - trading - INFO - Running backtest for AAPL from 2025-03-10 to 2025-03-12 with b3cc3f6b
+2025-03-12 01:39:20,397 - trading - ERROR - Backtest error: get_historical_data() got multiple values for argument 'interval'
+Traceback (most recent call last):
+  File "C:\Users\jeffr\Downloads\PIC16B\PIC16B-Mathematical-Trading-Project\strategy.py", line 1834, in run_backtest_callback
+    result = run_backtest(
+             ^^^^^^^^^^^^^
+  File "C:\Users\jeffr\Downloads\PIC16B\PIC16B-Mathematical-Trading-Project\custom_backtest.py", line 329, in run_backtest
+    raise e
+  File "C:\Users\jeffr\Downloads\PIC16B\PIC16B-Mathematical-Trading-Project\custom_backtest.py", line 304, in run_backtest
+    df = get_historical_data(symbol, start, end, api, interval=interval)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: get_historical_data() got multiple values for argument 'interval'
+2025-03-12 01:39:21,434 - trading - INFO - Running backtest for AAPL from 2025-03-10 to 2025-03-12 with b3cc3f6b
+2025-03-12 01:39:21,437 - trading - ERROR - Backtest error: get_historical_data() got multiple values for argument 'interval'
+Traceback (most recent call last):
+  File "C:\Users\jeffr\Downloads\PIC16B\PIC16B-Mathematical-Trading-Project\strategy.py", line 1834, in run_backtest_callback
+    result = run_backtest(
+             ^^^^^^^^^^^^^
+  File "C:\Users\jeffr\Downloads\PIC16B\PIC16B-Mathematical-Trading-Project\custom_backtest.py", line 329, in run_backtest
+    raise e
+  File "C:\Users\jeffr\Downloads\PIC16B\PIC16B-Mathematical-Trading-Project\custom_backtest.py", line 304, in run_backtest
+    df = get_historical_data(symbol, start, end, api, interval=interval)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: get_historical_data() got multiple values for argument 'interval'
+2025-03-12 01:46:54,384 - trading - INFO - Running backtest for AAPL from 2025-03-10 to 2025-03-12 with b3cc3f6b
+2025-03-12 01:46:54,587 - trading - ERROR - Backtest error: cannot access local variable 'file_html' where it is not associated with a value
+Traceback (most recent call last):
+  File "C:\Users\jeffr\Downloads\PIC16B\PIC16B-Mathematical-Trading-Project\strategy.py", line 1880, in run_backtest_callback
+    dbc.Card([
+               
+UnboundLocalError: cannot access local variable 'file_html' where it is not associated with a value

@@ -12,6 +12,10 @@ import os
 import numpy as np
 from dotenv import load_dotenv
 import logging 
+from custom_backtest import parse_strategy_json, calculate_indicators, create_custom_strategy, run_backtest
+import yfinance as yf
+
+
 load_dotenv()
 
 trading_threads = {}
@@ -679,232 +683,232 @@ def create_custom_strategy_class(strategy_config):
     
     return CustomStrategy
 
-def generate_backtest_plot(data, stats, strategy_config):
-    """Generate a custom backtest plot with proper data cleaning"""
-    # Create a Bokeh figure for the price chart
-    p = figure(
-        title=f"{strategy_config['name'] or 'Strategy'} Backtest",
-        x_axis_type="datetime",
-        width=1000,
-        height=500,
-        tools="pan,wheel_zoom,box_zoom,reset,save",
-        toolbar_location="right"
-    )
+# def generate_backtest_plot(data, stats, strategy_config):
+#     """Generate a custom backtest plot with proper data cleaning"""
+#     # Create a Bokeh figure for the price chart
+#     p = figure(
+#         title=f"{strategy_config['name'] or 'Strategy'} Backtest",
+#         x_axis_type="datetime",
+#         width=1000,
+#         height=500,
+#         tools="pan,wheel_zoom,box_zoom,reset,save",
+#         toolbar_location="right"
+#     )
     
-    # Create a ColumnDataSource for the data with proper NaN handling
-    source_data = {
-        'date': data.index,
-        'open': data['Open'].replace([np.inf, -np.inf], np.nan).fillna(0).values,
-        'high': data['High'].replace([np.inf, -np.inf], np.nan).fillna(0).values,
-        'low': data['Low'].replace([np.inf, -np.inf], np.nan).fillna(0).values,
-        'close': data['Close'].replace([np.inf, -np.inf], np.nan).fillna(0).values
-    }
+#     # Create a ColumnDataSource for the data with proper NaN handling
+#     source_data = {
+#         'date': data.index,
+#         'open': data['Open'].replace([np.inf, -np.inf], np.nan).fillna(0).values,
+#         'high': data['High'].replace([np.inf, -np.inf], np.nan).fillna(0).values,
+#         'low': data['Low'].replace([np.inf, -np.inf], np.nan).fillna(0).values,
+#         'close': data['Close'].replace([np.inf, -np.inf], np.nan).fillna(0).values
+#     }
     
-    # Initialize indicator_lines list
-    indicator_lines = []
-    indicators_config = strategy_config.get("indicators", [])
+#     # Initialize indicator_lines list
+#     indicator_lines = []
+#     indicators_config = strategy_config.get("indicators", [])
     
-    # Calculate and add all indicators to the plot with proper error handling
-    for indicator in indicators_config:
-        try:
-            indicator_type = indicator.get("type")
-            settings = indicator.get("settings", {})
+#     # Calculate and add all indicators to the plot with proper error handling
+#     for indicator in indicators_config:
+#         try:
+#             indicator_type = indicator.get("type")
+#             settings = indicator.get("settings", {})
             
-            if indicator_type == "SMA_CROSS":
-                fast_period = int(settings.get("fast_period", 10))
-                slow_period = int(settings.get("slow_period", 20))
-                source_data[f'sma_{fast_period}'] = ta.sma(data['Close'], length=fast_period).fillna(0).values
-                source_data[f'sma_{slow_period}'] = ta.sma(data['Close'], length=slow_period).fillna(0).values
-                indicator_lines.append((f'sma_{fast_period}', f'SMA({fast_period})', '#FF7F0E'))
-                indicator_lines.append((f'sma_{slow_period}', f'SMA({slow_period})', '#2CA02C'))
+#             if indicator_type == "SMA_CROSS":
+#                 fast_period = int(settings.get("fast_period", 10))
+#                 slow_period = int(settings.get("slow_period", 20))
+#                 source_data[f'sma_{fast_period}'] = ta.sma(data['Close'], length=fast_period).fillna(0).values
+#                 source_data[f'sma_{slow_period}'] = ta.sma(data['Close'], length=slow_period).fillna(0).values
+#                 indicator_lines.append((f'sma_{fast_period}', f'SMA({fast_period})', '#FF7F0E'))
+#                 indicator_lines.append((f'sma_{slow_period}', f'SMA({slow_period})', '#2CA02C'))
                 
-            elif indicator_type == "RSI":
-                period = int(settings.get("period", 14))
-                rsi_values = ta.rsi(data['Close'], length=period).fillna(50).values
-                source_data['rsi'] = rsi_values
-                indicator_lines.append(('rsi', f'RSI({period})', '#D62728'))
+#             elif indicator_type == "RSI":
+#                 period = int(settings.get("period", 14))
+#                 rsi_values = ta.rsi(data['Close'], length=period).fillna(50).values
+#                 source_data['rsi'] = rsi_values
+#                 indicator_lines.append(('rsi', f'RSI({period})', '#D62728'))
                 
-            elif indicator_type == "MACD":
-                fast_period = int(settings.get("fast_period", 12))
-                slow_period = int(settings.get("slow_period", 26))
-                signal_period = int(settings.get("signal_period", 9))
-                macd_data = ta.macd(data['Close'], fast=fast_period, slow=slow_period, signal=signal_period)
-                for col in macd_data.columns:
-                    source_data[col] = macd_data[col].fillna(0).values
-                indicator_lines.append((macd_data.columns[0], f'MACD Line', '#9467BD'))
-                indicator_lines.append((macd_data.columns[1], f'MACD Signal', '#8C564B'))
+#             elif indicator_type == "MACD":
+#                 fast_period = int(settings.get("fast_period", 12))
+#                 slow_period = int(settings.get("slow_period", 26))
+#                 signal_period = int(settings.get("signal_period", 9))
+#                 macd_data = ta.macd(data['Close'], fast=fast_period, slow=slow_period, signal=signal_period)
+#                 for col in macd_data.columns:
+#                     source_data[col] = macd_data[col].fillna(0).values
+#                 indicator_lines.append((macd_data.columns[0], f'MACD Line', '#9467BD'))
+#                 indicator_lines.append((macd_data.columns[1], f'MACD Signal', '#8C564B'))
                 
-            elif indicator_type == "BBANDS":
-                period = int(settings.get("period", 20))
-                std_dev = float(settings.get("std_dev", 2.0))
-                bbands_data = ta.bbands(data['Close'], length=period, std=std_dev)
-                for col in bbands_data.columns:
-                    source_data[col] = bbands_data[col].fillna(0).values
-                indicator_lines.append((bbands_data.columns[0], f'BB Upper', '#FF7F0E'))
-                indicator_lines.append((bbands_data.columns[1], f'BB Middle', '#2CA02C'))
-                indicator_lines.append((bbands_data.columns[2], f'BB Lower', '#17BECF'))
+#             elif indicator_type == "BBANDS":
+#                 period = int(settings.get("period", 20))
+#                 std_dev = float(settings.get("std_dev", 2.0))
+#                 bbands_data = ta.bbands(data['Close'], length=period, std=std_dev)
+#                 for col in bbands_data.columns:
+#                     source_data[col] = bbands_data[col].fillna(0).values
+#                 indicator_lines.append((bbands_data.columns[0], f'BB Upper', '#FF7F0E'))
+#                 indicator_lines.append((bbands_data.columns[1], f'BB Middle', '#2CA02C'))
+#                 indicator_lines.append((bbands_data.columns[2], f'BB Lower', '#17BECF'))
                 
-            elif indicator_type == "STOCH":
-                k_period = int(settings.get("k_period", 14))
-                d_period = int(settings.get("d_period", 3))
-                smooth_k = int(settings.get("smooth_k", 3))
-                stoch_data = ta.stoch(data['High'], data['Low'], data['Close'], k=k_period, d=d_period, smooth_k=smooth_k)
-                for col in stoch_data.columns:
-                    source_data[col] = stoch_data[col].fillna(50).values
-                indicator_lines.append((stoch_data.columns[0], f'Stochastic %K', '#E377C2'))
-                indicator_lines.append((stoch_data.columns[1], f'Stochastic %D', '#7F7F7F'))
+#             elif indicator_type == "STOCH":
+#                 k_period = int(settings.get("k_period", 14))
+#                 d_period = int(settings.get("d_period", 3))
+#                 smooth_k = int(settings.get("smooth_k", 3))
+#                 stoch_data = ta.stoch(data['High'], data['Low'], data['Close'], k=k_period, d=d_period, smooth_k=smooth_k)
+#                 for col in stoch_data.columns:
+#                     source_data[col] = stoch_data[col].fillna(50).values
+#                 indicator_lines.append((stoch_data.columns[0], f'Stochastic %K', '#E377C2'))
+#                 indicator_lines.append((stoch_data.columns[1], f'Stochastic %D', '#7F7F7F'))
                 
-            elif indicator_type == "SMI":
-                length = int(settings.get("period", 13))
-                signal_length = int(settings.get("signal_period", 3))
-                smi_data = ta.smi(data['Close'], length=length, signal=signal_length)
-                for col in smi_data.columns:
-                    source_data[col] = smi_data[col].fillna(0).values
-                indicator_lines.append((smi_data.columns[0], f'SMI', '#BCBD22'))
-                indicator_lines.append((smi_data.columns[1], f'SMI Signal', '#17BECF'))
-        except Exception as e:
-            print(f"Error calculating {indicator_type}: {str(e)}")
-            continue
+#             elif indicator_type == "SMI":
+#                 length = int(settings.get("period", 13))
+#                 signal_length = int(settings.get("signal_period", 3))
+#                 smi_data = ta.smi(data['Close'], length=length, signal=signal_length)
+#                 for col in smi_data.columns:
+#                     source_data[col] = smi_data[col].fillna(0).values
+#                 indicator_lines.append((smi_data.columns[0], f'SMI', '#BCBD22'))
+#                 indicator_lines.append((smi_data.columns[1], f'SMI Signal', '#17BECF'))
+#         except Exception as e:
+#             print(f"Error calculating {indicator_type}: {str(e)}")
+#             continue
     
-    # Verify all arrays are the same length
-    length_check = None
-    for k, v in source_data.items():
-        if length_check is None:
-            length_check = len(v)
-        elif len(v) != length_check:
-            print(f"Column {k} has length {len(v)}, expected {length_check}")
-            # Pad or truncate to match length
-            if len(v) > length_check:
-                source_data[k] = v[:length_check]
-            else:
-                source_data[k] = np.pad(v, (0, length_check - len(v)), 'constant', constant_values=0)
+#     # Verify all arrays are the same length
+#     length_check = None
+#     for k, v in source_data.items():
+#         if length_check is None:
+#             length_check = len(v)
+#         elif len(v) != length_check:
+#             print(f"Column {k} has length {len(v)}, expected {length_check}")
+#             # Pad or truncate to match length
+#             if len(v) > length_check:
+#                 source_data[k] = v[:length_check]
+#             else:
+#                 source_data[k] = np.pad(v, (0, length_check - len(v)), 'constant', constant_values=0)
     
-    # Create the ColumnDataSource
-    source = ColumnDataSource(data=source_data)
+#     # Create the ColumnDataSource
+#     source = ColumnDataSource(data=source_data)
     
-    # Rest of the function remains unchanged...
-    # Plot price, indicators, etc.
-    price_line = p.line('date', 'close', source=source, color='#1F77B4', line_width=2, legend_label="Price")
+#     # Rest of the function remains unchanged...
+#     # Plot price, indicators, etc.
+#     price_line = p.line('date', 'close', source=source, color='#1F77B4', line_width=2, legend_label="Price")
     
-    # Plot indicators
-    for col, label, color in indicator_lines:
-        if col in source_data:  # Only plot if the column exists
-            p.line('date', col, source=source, color=color, line_width=1.5, legend_label=label)
+#     # Plot indicators
+#     for col, label, color in indicator_lines:
+#         if col in source_data:  # Only plot if the column exists
+#             p.line('date', col, source=source, color=color, line_width=1.5, legend_label=label)
     
-    # Add buy/sell markers if trades exist
-    trades = stats['_trades']
-    if not trades.empty:
-        buy_signals = trades[trades.Size > 0]
-        sell_signals = trades[trades.Size < 0]
+#     # Add buy/sell markers if trades exist
+#     trades = stats['_trades']
+#     if not trades.empty:
+#         buy_signals = trades[trades.Size > 0]
+#         sell_signals = trades[trades.Size < 0]
         
-        # Plot buy signals
-        if not buy_signals.empty:
-            p.circle(
-                x=buy_signals.EntryTime,
-                y=buy_signals.EntryPrice,
-                size=10,
-                color='green',
-                alpha=0.7,
-                legend_label="Buy"
-            )
+#         # Plot buy signals
+#         if not buy_signals.empty:
+#             p.circle(
+#                 x=buy_signals.EntryTime,
+#                 y=buy_signals.EntryPrice,
+#                 size=10,
+#                 color='green',
+#                 alpha=0.7,
+#                 legend_label="Buy"
+#             )
         
-        # Plot sell signals
-        if not sell_signals.empty:
-            p.circle(
-                x=sell_signals.EntryTime,
-                y=sell_signals.ExitPrice,  # Use exit price for sell signals
-                size=10,
-                color='red',
-                alpha=0.7,
-                legend_label="Sell"
-            )
+#         # Plot sell signals
+#         if not sell_signals.empty:
+#             p.circle(
+#                 x=sell_signals.EntryTime,
+#                 y=sell_signals.ExitPrice,  # Use exit price for sell signals
+#                 size=10,
+#                 color='red',
+#                 alpha=0.7,
+#                 legend_label="Sell"
+#             )
     
-    # Add hover tool
-    hover = HoverTool(
-        tooltips=[
-            ('Date', '@date{%F}'),
-            ('Open', '@open{0,0.00}'),
-            ('High', '@high{0,0.00}'),
-            ('Low', '@low{0,0.00}'),
-            ('Close', '@close{0,0.00}')
-        ],
-        formatters={'@date': 'datetime'},
-        mode='vline'
-    )
-    p.add_tools(hover)
-    p.add_tools(CrosshairTool())
+#     # Add hover tool
+#     hover = HoverTool(
+#         tooltips=[
+#             ('Date', '@date{%F}'),
+#             ('Open', '@open{0,0.00}'),
+#             ('High', '@high{0,0.00}'),
+#             ('Low', '@low{0,0.00}'),
+#             ('Close', '@close{0,0.00}')
+#         ],
+#         formatters={'@date': 'datetime'},
+#         mode='vline'
+#     )
+#     p.add_tools(hover)
+#     p.add_tools(CrosshairTool())
     
-    # Configure legend
-    p.legend.location = "top_left"
-    p.legend.click_policy = "hide"
+#     # Configure legend
+#     p.legend.location = "top_left"
+#     p.legend.click_policy = "hide"
     
-    # Create statistics table with HTML/DIV approach for more reliable display
-    from bokeh.models import Div
+#     # Create statistics table with HTML/DIV approach for more reliable display
+#     from bokeh.models import Div
     
-    stats_data = {
-        'Metric': [
-            'Return [%]', 'Buy & Hold Return [%]', 'Max. Drawdown [%]', 
-            'Sharpe Ratio', 'Sortino Ratio', 'Calmar Ratio',
-            '# Trades', 'Win Rate [%]', 'Best Trade [%]', 'Worst Trade [%]'
-        ],
-        'Value': [
-            f"{stats['Return [%]']:.2f}",
-            f"{stats['Buy & Hold Return [%]']:.2f}",
-            f"{stats['Max. Drawdown [%]']:.2f}",
-            f"{stats['Sharpe Ratio']:.2f}",
-            f"{stats['Sortino Ratio']:.2f}",
-            f"{stats['Calmar Ratio']:.2f}",
-            f"{stats['# Trades']}",
-            f"{stats['Win Rate [%]']:.2f}",
-            f"{stats['Best Trade [%]']:.2f}",
-            f"{stats['Worst Trade [%]']:.2f}"
-        ]
-    }
+#     stats_data = {
+#         'Metric': [
+#             'Return [%]', 'Buy & Hold Return [%]', 'Max. Drawdown [%]', 
+#             'Sharpe Ratio', 'Sortino Ratio', 'Calmar Ratio',
+#             '# Trades', 'Win Rate [%]', 'Best Trade [%]', 'Worst Trade [%]'
+#         ],
+#         'Value': [
+#             f"{stats['Return [%]']:.2f}",
+#             f"{stats['Buy & Hold Return [%]']:.2f}",
+#             f"{stats['Max. Drawdown [%]']:.2f}",
+#             f"{stats['Sharpe Ratio']:.2f}",
+#             f"{stats['Sortino Ratio']:.2f}",
+#             f"{stats['Calmar Ratio']:.2f}",
+#             f"{stats['# Trades']}",
+#             f"{stats['Win Rate [%]']:.2f}",
+#             f"{stats['Best Trade [%]']:.2f}",
+#             f"{stats['Worst Trade [%]']:.2f}"
+#         ]
+#     }
     
-    # Create HTML for statistics table
-    stats_html = """
-    <div style="padding: 15px; margin-top: 15px;">
-        <h3 style="text-align: center; margin-bottom: 15px;">Backtest Statistics</h3>
-        <table style="width: 100%; border-collapse: collapse; text-align: center;">
-            <tr style="border-bottom: 1px solid #555;">
-                <th style="padding: 8px;">Metric</th>
-                <th style="padding: 8px;">Value</th>
-                <th style="padding: 8px;">Metric</th>
-                <th style="padding: 8px;">Value</th>
-            </tr>
-    """
+#     # Create HTML for statistics table
+#     stats_html = """
+#     <div style="padding: 15px; margin-top: 15px;">
+#         <h3 style="text-align: center; margin-bottom: 15px;">Backtest Statistics</h3>
+#         <table style="width: 100%; border-collapse: collapse; text-align: center;">
+#             <tr style="border-bottom: 1px solid #555;">
+#                 <th style="padding: 8px;">Metric</th>
+#                 <th style="padding: 8px;">Value</th>
+#                 <th style="padding: 8px;">Metric</th>
+#                 <th style="padding: 8px;">Value</th>
+#             </tr>
+#     """
     
-    # Add rows for statistics
-    metrics = stats_data['Metric']
-    values = stats_data['Value']
-    half = len(metrics) // 2
+#     # Add rows for statistics
+#     metrics = stats_data['Metric']
+#     values = stats_data['Value']
+#     half = len(metrics) // 2
     
-    for i in range(half):
-        stats_html += f"""
-        <tr style="border-bottom: 1px solid #444;">
-            <td style="padding: 8px; font-weight: bold;">{metrics[i]}</td>
-            <td style="padding: 8px;">{values[i]}</td>
-            <td style="padding: 8px; font-weight: bold;">{metrics[i + half]}</td>
-            <td style="padding: 8px;">{values[i + half]}</td>
-        </tr>
-        """
+#     for i in range(half):
+#         stats_html += f"""
+#         <tr style="border-bottom: 1px solid #444;">
+#             <td style="padding: 8px; font-weight: bold;">{metrics[i]}</td>
+#             <td style="padding: 8px;">{values[i]}</td>
+#             <td style="padding: 8px; font-weight: bold;">{metrics[i + half]}</td>
+#             <td style="padding: 8px;">{values[i + half]}</td>
+#         </tr>
+#         """
     
-    stats_html += """
-        </table>
-    </div>
-    """
+#     stats_html += """
+#         </table>
+#     </div>
+#     """
     
-    # Create Div component with the HTML
-    stats_div = Div(text=stats_html, width=1000, height=300)
+#     # Create Div component with the HTML
+#     stats_div = Div(text=stats_html, width=1000, height=300)
     
-    # Layout with both components
-    from bokeh.layouts import column
-    layout = column(p, stats_div)
+#     # Layout with both components
+#     from bokeh.layouts import column
+#     layout = column(p, stats_div)
     
-    # Convert to HTML
-    html_content = file_html(layout, CDN, "Backtest Results")
+#     # Convert to HTML
+#     html_content = file_html(layout, CDN, "Backtest Results")
     
-    return html_content
+#     return html_content
 
 # Initialize the app with dark theme
 app = dash.Dash(
@@ -1185,201 +1189,7 @@ strategy_layout = html.Div([
 
 
 
-from backtesting import Backtest, Strategy
-from backtesting.lib import crossover
-from backtesting.test import SMA, GOOG
-from bokeh.embed import file_html
-from bokeh.resources import CDN
 
-
-# Define SMA Crossover Strategy
-class SmaCross(Strategy):
-    n1 = 10
-    n2 = 20
-
-    def init(self):
-        close = self.data.Close
-        self.sma1 = self.I(SMA, close, self.n1)
-        self.sma2 = self.I(SMA, close, self.n2)
-
-    def next(self):
-        if crossover(self.sma1, self.sma2):
-            self.position.close()
-            self.buy()
-        elif crossover(self.sma2, self.sma1):
-            self.position.close()
-            self.sell()
-
-
-from bokeh.plotting import figure
-from bokeh.models import ColumnDataSource, HoverTool, CrosshairTool, Legend
-from bokeh.layouts import column
-from bokeh.embed import file_html
-
-def generate_custom_backtest_plot(cash):
-
-    # Define SMA Crossover Strategy
-    class SmaCross(Strategy):
-        n1 = 10
-        n2 = 20
-
-        def init(self):
-            close = self.data.Close
-            self.sma1 = self.I(SMA, close, self.n1)
-            self.sma2 = self.I(SMA, close, self.n2)
-
-        def next(self):
-            if crossover(self.sma1, self.sma2):
-                self.position.close()
-                self.buy()
-            elif crossover(self.sma2, self.sma1):
-                self.position.close()
-                self.sell()
-
-    # Run the backtest
-    bt = Backtest(GOOG, SmaCross, cash=cash, commission=.002, exclusive_orders=True)
-    stats = bt.run()
-    
-    # Get the data we need for plotting
-    data = GOOG.copy()
-    
-    # Convert index to datetime if it's not already
-    if not isinstance(data.index, pd.DatetimeIndex):
-        data.index = pd.to_datetime(data.index)
-    
-    # Add strategy indicators
-    sma1 = SMA(data.Close, 10)
-    sma2 = SMA(data.Close, 20)
-    
-    # Get trade data from stats
-    trades = stats['_trades']
-    
-    # Create a Bokeh figure for the price chart
-    p = figure(
-        title="SMA Crossover Backtest",
-        x_axis_type="datetime",
-        width=1000,
-        height=500,
-        tools="pan,wheel_zoom,box_zoom,reset,save",
-        toolbar_location="right"
-    )
-    
-    # Create a ColumnDataSource for the OHLC data
-    source = ColumnDataSource(data={
-        'date': data.index,
-        'open': data.Open,
-        'high': data.High,
-        'low': data.Low,
-        'close': data.Close,
-        'sma1': sma1,
-        'sma2': sma2
-    })
-    
-    # Plot price as a line
-    price_line = p.line('date', 'close', source=source, color='#1F77B4', line_width=2, legend_label="Price")
-    
-    # Plot SMAs
-    sma1_line = p.line('date', 'sma1', source=source, color='#FF7F0E', line_width=1.5, legend_label=f"SMA({SmaCross.n1})")
-    sma2_line = p.line('date', 'sma2', source=source, color='#2CA02C', line_width=1.5, legend_label=f"SMA({SmaCross.n2})")
-    
-    # Add buy/sell markers if trades exist
-    if not trades.empty:
-        buy_signals = trades[trades.Size > 0]
-        sell_signals = trades[trades.Size < 0]
-        
-        # Plot buy signals
-        if not buy_signals.empty:
-            p.circle(
-                x=buy_signals.EntryTime,
-                y=buy_signals.EntryPrice,
-                size=10,
-                color='green',
-                alpha=0.7,
-                legend_label="Buy"
-            )
-        
-        # Plot sell signals
-        if not sell_signals.empty:
-            p.circle(
-                x=sell_signals.EntryTime,
-                y=sell_signals.EntryPrice,
-                size=10,
-                color='red',
-                alpha=0.7,
-                legend_label="Sell"
-            )
-    
-    # Add hover tool
-    hover = HoverTool(
-        tooltips=[
-            ('Date', '@date{%F}'),
-            ('Open', '@open{0,0.00}'),
-            ('High', '@high{0,0.00}'),
-            ('Low', '@low{0,0.00}'),
-            ('Close', '@close{0,0.00}'),
-            (f'SMA({SmaCross.n1})', '@sma1{0,0.00}'),
-            (f'SMA({SmaCross.n2})', '@sma2{0,0.00}')
-        ],
-        formatters={'@date': 'datetime'},
-        mode='vline'
-    )
-    p.add_tools(hover)
-    p.add_tools(CrosshairTool())
-    
-    # Configure legend
-    p.legend.location = "top_left"
-    p.legend.click_policy = "hide"
-    
-    # Create a stats summary figure
-    stats_data = {
-        'Metric': [
-            'Return [%]', 'Buy & Hold Return [%]', 'Max. Drawdown [%]', 
-            'Sharpe Ratio', 'Sortino Ratio', 'Calmar Ratio',
-            '# Trades', 'Win Rate [%]', 'Best Trade [%]', 'Worst Trade [%]'
-        ],
-        'Value': [
-            f"{stats['Return [%]']:.2f}",
-            f"{stats['Buy & Hold Return [%]']:.2f}",
-            f"{stats['Max. Drawdown [%]']:.2f}",
-            f"{stats['Sharpe Ratio']:.2f}",
-            f"{stats['Sortino Ratio']:.2f}",
-            f"{stats['Calmar Ratio']:.2f}",
-            f"{stats['# Trades']}",
-            f"{stats['Win Rate [%]']:.2f}",
-            f"{stats['Best Trade [%]']:.2f}",
-            f"{stats['Worst Trade [%]']:.2f}"
-        ]
-    }
-    
-    # Create a stats table with improved layout
-    from bokeh.models import ColumnDataSource, DataTable, TableColumn
-    
-    # Create a DataTable instead of a figure for statistics
-    source = ColumnDataSource(data=dict(
-        metric=stats_data['Metric'],
-        value=stats_data['Value']
-    ))
-    
-    columns = [
-        TableColumn(field="metric", title="Metric"),
-        TableColumn(field="value", title="Value")
-    ]
-    
-    data_table = DataTable(
-        source=source, 
-        columns=columns,
-        width=1000, 
-        height=300,
-        index_position=None
-    )
-    
-    # Layout with table
-    layout = column(p, data_table)
-    
-    # Convert to HTML
-    html_content = file_html(layout, CDN, "Backtest Results")
-    
-    return html_content
 # Historical Data Layout
 historical_layout = html.Div([
     html.H2("Historical Data Backtesting", className="mt-3 mb-4"),
@@ -1601,111 +1411,7 @@ def update_historical_strategy_dropdown(trigger):
     return [{"label": s["name"] or "Unnamed Strategy", "value": s["id"]} for s in strategies] if strategies else []
 
 
-@callback(
-    Output("backtest-bokeh-frame", "srcDoc"),
-    Input("run-backtest-btn", "n_clicks"),
-    [State("ticker-input", "value"),
-     State("timeframe-dropdown", "value"),
-     State("start-date", "value"),
-     State("end-date", "value"),
-     State("strategy-dropdown", "value"),
-     State("cash-input", "value")],
-    prevent_initial_call=True
-)
-def run_backtest(n_clicks, ticker, timeframe, start_date, end_date, strategy_id, cash):
-    if not all([ticker, timeframe, start_date, end_date, strategy_id, cash]):
-        # Create error message if inputs are missing
-        from bokeh.plotting import figure
-        from bokeh.embed import file_html
-        from bokeh.resources import CDN
-        
-        error_fig = figure(title="Missing Input Parameters", width=1000, height=300)
-        error_fig.text(
-            x=0.5, y=0.5, 
-            text=["Please provide all required inputs: ticker, timeframe, dates, strategy and cash amount."],
-            text_align="center", text_baseline="middle", text_font_size="14px"
-        )
-        return file_html(error_fig, CDN)
-    
-    try:
-        # Convert cash to float
-        cash = float(cash)
-        
-        # Fetch data from Alpaca API
-        api = tradeapi.REST(default_key, default_secret_key, BASE_URL, api_version='v2')
-        
-        # Convert timeframe to Alpaca format
-        timeframe_map = {
-            "1m": "1Min",
-            "5m": "5Min", 
-            "15m": "15Min",
-            "1h": "1Hour",
-            "1d": "1Day"
-        }
-        alpaca_timeframe = timeframe_map.get(timeframe, "1Day")
-        
-        # Fetch historical data
-        logger.info(f"Fetching data for {ticker} from {start_date} to {end_date}")
-        bars = api.get_bars(
-            symbol=ticker,
-            timeframe=alpaca_timeframe,
-            start=start_date,
-            end=end_date
-        ).df
-        
-        if bars.empty:
-            raise ValueError(f"No data available for {ticker} in selected date range")
-        
-        # Prepare data for backtesting
-        data = pd.DataFrame({
-            'Open': bars['open'],
-            'High': bars['high'],
-            'Low': bars['low'],
-            'Close': bars['close'],
-            'Volume': bars['volume']
-        })
-        
-        # Get strategy configuration from database
-        db = get_strategy_db()
-        cursor = db.cursor()
-        cursor.execute("SELECT id, name, risk_return_preference, indicators FROM strategy WHERE id = ?", (strategy_id,))
-        strategy_row = cursor.fetchone()
-        
-        if not strategy_row:
-            raise ValueError(f"Strategy with ID {strategy_id} not found")
-        
-        strategy_config = {
-            "id": strategy_row[0],
-            "name": strategy_row[1],
-            "risk_return_preference": float(strategy_row[2]),
-            "indicators": json.loads(strategy_row[3])
-        }
-        
-        # Create custom strategy class
-        CustomStrategy = create_custom_strategy_class(strategy_config)
-        
-        # Run backtest
-        bt = Backtest(data, CustomStrategy, cash=cash, commission=0.002, exclusive_orders=True)
-        stats = bt.run()
-        
-        # Generate visualization
-        return generate_backtest_plot(data, stats, strategy_config)
-        
-    except Exception as e:
-        logger.error(f"Backtest error: {str(e)}", exc_info=True)
-        
-        # Create simple error message figure
-        from bokeh.plotting import figure
-        from bokeh.embed import file_html
-        from bokeh.resources import CDN
-        
-        error_fig = figure(title=f"Error Running Backtest", width=1000, height=300)
-        error_fig.text(
-            x=0.5, y=0.5, 
-            text=[f"An error occurred: {str(e)}"],
-            text_align="center", text_baseline="middle", text_font_size="14px"
-        )
-        return file_html(error_fig, CDN)
+
 
 # Live Trading Layout
 live_layout = html.Div([
@@ -2065,7 +1771,136 @@ def update_live_strategy_dropdown(trigger):
     strategies = load_strategies()
     return [{"label": s["name"], "value": s["id"]} for s in strategies] if strategies else []
 
+
+
+
+
+
+    
 # Callback for Start/Stop trading buttons state
+
+@callback(
+    Output("backtest-bokeh-frame", "srcDoc"),
+    Input("run-backtest-btn", "n_clicks"),
+    [State("ticker-input", "value"),
+     State("timeframe-dropdown", "value"),
+     State("start-date", "value"),
+     State("end-date", "value"),
+     State("strategy-dropdown", "value"),
+     State("cash-input", "value")],
+    prevent_initial_call=True
+)
+def run_backtest_callback(n_clicks, ticker, timeframe, start_date, end_date, strategy_id, cash):
+    if not all([ticker, timeframe, start_date, end_date, strategy_id, cash]):
+        # Return an error message if inputs are missing
+        from bokeh.plotting import figure
+        from bokeh.embed import file_html
+        from bokeh.resources import CDN
+        
+        error_fig = figure(title="Missing Input Parameters", width=1000, height=300)
+        error_fig.text(
+            x=0.5, y=0.5, 
+            text=["Please provide all required inputs: ticker, timeframe, dates, strategy and cash amount."],
+            text_align="center", text_baseline="middle", text_font_size="14px"
+        )
+        return file_html(error_fig, CDN)
+
+    try:
+        # Import the run_backtest function from custom_backtest.py
+        from custom_backtest import run_backtest
+        
+        # Convert cash to float
+        cash = float(cash)
+        
+        # Map Dash timeframe values to yfinance format
+        timeframe_map = {
+            "1m": "1m",
+            "5m": "5m",
+            "15m": "15m",
+            "1h": "1h",
+            "1d": "1d"
+        }
+        yf_interval = timeframe_map.get(timeframe, "1d")
+        
+        # Get strategy configuration from database
+        db = get_strategy_db()
+        cursor = db.cursor()
+        cursor.execute("SELECT id, name, risk_return_preference, indicators FROM strategy WHERE id = ?", (strategy_id,))
+        strategy_row = cursor.fetchone()
+
+        if not strategy_row:
+            raise ValueError(f"Strategy with ID {strategy_id} not found")
+
+        # Create strategy JSON in the format our backtester expects
+        strategy_json = {
+            "ID": strategy_row[0],
+            "Risk-Return Preference": float(strategy_row[2]),
+            "Number of Indicators": len(json.loads(strategy_row[3])),
+            "Indicators": json.loads(strategy_row[3])
+        }
+        
+        # Print for debugging
+        print(f"Running backtest for {ticker} from {start_date} to {end_date} with interval {yf_interval}")
+        
+        try:
+            # Run the backtest - this returns HTML or can throw an exception
+            html_content = run_backtest(
+                symbol=ticker, 
+                start=start_date, 
+                end=end_date, 
+                strategy_json=strategy_json, 
+                cash=cash, 
+                interval=yf_interval
+            )
+            
+            # Check if html_content is a string (HTML content)
+            if isinstance(html_content, str):
+                return html_content
+            else:
+                # If it's not a string, it might be a Bokeh model
+                # Let's try to convert it to HTML
+                from bokeh.embed import file_html
+                from bokeh.resources import CDN
+                return file_html(html_content, CDN)
+                
+        except Exception as e:
+            print(f"Error in run_backtest function: {str(e)}")
+            # Create a custom error message with the backtest error
+            from bokeh.plotting import figure
+            from bokeh.embed import file_html
+            from bokeh.resources import CDN
+            
+            error_fig = figure(title="Backtest Execution Error", width=1000, height=300)
+            error_fig.text(
+                x=0.5, y=0.5,
+                text=[f"Error running backtest: {str(e)}"],
+                text_align="center", text_baseline="middle", text_font_size="14px"
+            )
+            return file_html(error_fig, CDN)
+            
+    except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
+        print(f"Exception in backtest callback: {str(e)}")
+        print(f"Traceback: {tb}")
+        
+        # Create error message figure
+        from bokeh.plotting import figure
+        from bokeh.embed import file_html
+        from bokeh.resources import CDN
+
+        error_fig = figure(title=f"Error Running Backtest", width=1000, height=300)
+        error_message = f"An error occurred: {str(e)}"
+        error_fig.text(
+            x=0.5, y=0.5, 
+            text=[error_message],
+            text_align="center", text_baseline="middle", text_font_size="14px"
+        )
+        return file_html(error_fig, CDN)
+
+
+
+
 # Historical Data Layout
 historical_layout = html.Div([
     html.H2("Historical Data Backtesting", className="mt-3 mb-4"),
