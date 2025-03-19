@@ -8,4 +8,5 @@ To access features that require the Alpaca API, you must place your own Alpaca A
 Instructions:
 - Create a file in your repository directory called .env
 - Create a variable "ALPACA_KEY" and set it equal to your user's alpaca key
-- Creae a variable "SECRET_KEY" and set it equal to your user's secret key
+- Create a variable "SECRET_KEY" and set it equal to your user's secret key
+- Run the main "strategy.py" file to locally host the site
