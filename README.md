@@ -1,5 +1,5 @@
 # QuantForge 
-### QuantForge is a webapp using Python’s dash framework that allows users to create custom financial trading strategies with basic stock indicators. It includes a backtesting module that allows user to test their strategies on historical data for a chosen stock and obtain key metrics about their strategy and returns. Additionally, Alpaca’s trading API is used to simulate live trading that places buy and sell orders based on the users’ custom indicator conditions, utilizing SQLite in Python to handle backend data management and store strategy info, orders, and portfolio info
+QuantForge is a webapp using Python’s dash framework that allows users to create custom financial trading strategies with basic stock indicators. It includes a backtesting module that allows user to test their strategies on historical data for a chosen stock and obtain key metrics about their strategy and returns. Additionally, Alpaca’s trading API is used to simulate live trading that places buy and sell orders based on the users’ custom indicator conditions, utilizing SQLite in Python to handle backend data management and store strategy info, orders, and portfolio info
 
 ### Core Features
 - Custom strategy creation with customizable indicator parameters based on 6 commonly used financial indicators: RSI, MACD, SMA Crossover, SMI, Bollinger Bands, Stochastic Oscillator
