@@ -3,6 +3,8 @@
 
 ### Setup Instructions:
 To access features that require the Alpaca API, you must place your own Alpaca API key in an environment file prior to running 
+
+
 Instructions:
 - Create a file in your repository directory called .env
 - Create a variable "ALPACA_KEY" and set it equal to your user's alpaca key
